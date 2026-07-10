@@ -72,8 +72,10 @@
   function classify(cell) {
     cell.isVirus = !!(cell.flags & 0x01);
     cell.isEjected = !!(cell.flags & 0x10);
-    // hrana = sitni pellet-i bez imena, nisu virus ni moji
-    cell.isFood = !cell.isVirus && !cell.isMine && cell.size > 0 && cell.size < 22 && !cell.name;
+    // hrana = male celije bez imena (nisu virus/moje). Prag je relativan na
+    // ono sto na agar.rs vidimo (pellet-i ~64, virus ~100, igraci vece).
+    cell.isFood = !cell.isVirus && !cell.isMine && !cell.isEjected &&
+      cell.size > 0 && cell.size <= 96 && !cell.name;
   }
 
   // --------------------- DEKODER: opcode 16 (update sveta) --------------
@@ -93,13 +95,27 @@
   //     [ako flags & 0x08: utf16 name \0]
   //   u16 removeCount
   //   removeCount x { u32 id }                        -> uklanja se
+  // FORMAT ZA agar.rs (MultiOgar-Edited 1.6.1), potvrdjen iz --sniff hexa:
+  //   u8  op = 16
+  //   u16 eatCount
+  //   eatCount x { u32 hunterId, u32 eatenId }         -> eatenId se uklanja
+  //   loop:
+  //     u32 id;  if 0 -> kraj
+  //     i16 x
+  //     i16 y
+  //     u16 size
+  //     u8 r, u8 g, u8 b        (boja - UVEK, PRE flag-a)
+  //     u8 flags                (0x01 virus, 0x10 izbacena masa)
+  //     utf16 name \0           (UVEK prisutno; prazno = 0x0000)
+  //   u32 removeCount
+  //   removeCount x { u32 id }                          -> uklanja se
   function decodeUpdate(view) {
     let o = 1;
     const now = performance.now();
     try {
       const eatCount = view.getUint16(o, true); o += 2;
       for (let i = 0; i < eatCount; i++) {
-        o += 4;                              // eaterId
+        o += 4;                              // hunterId
         const eaten = view.getUint32(o, true); o += 4;
         cells.delete(eaten);
         ownedIds.delete(eaten);
@@ -108,30 +124,26 @@
       while (true) {
         const id = view.getUint32(o, true); o += 4;
         if (id === 0) break;
-        const x = view.getInt32(o, true); o += 4;
-        const y = view.getInt32(o, true); o += 4;
+        const x = view.getInt16(o, true); o += 2;
+        const y = view.getInt16(o, true); o += 2;
         const size = view.getUint16(o, true); o += 2;
-        const flags = view.getUint8(o); o += 1;
-        if (flags & 0x02) {                  // prosireni flag (tolerantno preskoci 4B)
-          o += 4;
-        }
         const r = view.getUint8(o); o += 1;
         const g = view.getUint8(o); o += 1;
         const b = view.getUint8(o); o += 1;
-        let name = '';
-        if (flags & 0x04) { const rr = readUTF8(view, o); o = rr.o; }        // skin (preskacemo sadrzaj)
-        if (flags & 0x08) { const rr = readUTF16(view, o); o = rr.o; name = rr.s; }
+        const flags = view.getUint8(o); o += 1;
+        const rr = readUTF16(view, o); o = rr.o;   // ime uvek prisutno (moze biti prazno)
+        const name = rr.s;
 
         let cell = cells.get(id);
         if (!cell) { cell = { id }; cells.set(id, cell); }
         cell.x = x; cell.y = y; cell.size = size;
         cell.r = r; cell.g = g; cell.b = b; cell.flags = flags;
-        if (name) cell.name = name;
+        cell.name = name;
         cell.isMine = ownedIds.has(id);
         cell.t = now;
         classify(cell);
       }
-      const removeCount = view.getUint16(o, true); o += 2;
+      const removeCount = view.getUint32(o, true); o += 4;
       for (let i = 0; i < removeCount; i++) {
         const id = view.getUint32(o, true); o += 4;
         cells.delete(id); ownedIds.delete(id);
@@ -270,12 +282,13 @@
   // ---- slanje preko protokola (opciono) ----
   function sendMoveProtocol(wx, wy) {
     if (!socket || socket.readyState !== 1) return;
-    const b = new ArrayBuffer(13);
+    // agar.rs (MultiOgar) move = op16 + f64 x + f64 y + u32 0  (21 bajta)
+    const b = new ArrayBuffer(21);
     const v = new DataView(b);
     v.setUint8(0, 16);
-    v.setInt32(1, wx | 0, true);
-    v.setInt32(5, wy | 0, true);
-    v.setUint32(9, 0, true);
+    v.setFloat64(1, wx, true);
+    v.setFloat64(9, wy, true);
+    v.setUint32(17, 0, true);
     try { socket.send(b); } catch (_) {}
   }
   function sendOp(op) {
