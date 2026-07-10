@@ -65,6 +65,11 @@ export function buildConfig() {
     feedMode: A.feedmode || 'kamikaze',
     minSplitSize: num(A.minSplitSize, 45), // ispod ove velicine hranilac ne split-uje (prvo raste)
     kamiReach: num(A.kamiReach, 1.7),      // split kad je razmak < (kralj+ja velicine)*ovo
+    splitCooldownMs: num(A.splitCd, 1600), // razmak izmedju split-ova (da se ne izmnozi u 16 delova)
+    fleeLatchMs: num(A.fleeLatch, 450),    // koliko ostaje u bekstvu posle detekcije pretnje (anti-jitter)
+    kingSplit: A.kingSplit === true,       // da li kralj sme da se split-uje u lovu (default NE - masa na hrpi)
+    kingFeedback: A.kingFeedback !== false,// kralj dobaci malo mase sitnom suigracu (rotacija)
+    foodScope: num(A.foodScope, 10),       // gledaj samo hranu blizu (me.size*ovo) - anti-jitter
 
     // Kontrola: 'input' (sinteticki mis/tastatura, najotpornije)
     //           'protocol' (salji pakete direktno preko socketa)

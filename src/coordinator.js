@@ -85,7 +85,7 @@ export async function runCoordinator(fleet, cfg, log) {
     const kingIndex = pickKing(cfg, world.teamCenters, prevKing);
     prevKing = kingIndex;
     const kingCenter = world.teamCenters[kingIndex] || null;
-    const ctx = { cfg, kingIndex, teamCenters: world.teamCenters };
+    const ctx = { cfg, kingIndex, teamCenters: world.teamCenters, now: Date.now() };
 
     // 3) Odluci i posalji komandu svakom botu (osim ako je --no-team,
     //    onda samo posmatramo i crtamo mapu).

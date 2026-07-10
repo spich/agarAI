@@ -76,14 +76,18 @@ function avoidVector(me, s, cfg) {
   return { v, danger };
 }
 
-// Ka najblizoj hrani, sa HISTEREZOM: drzi prethodni cilj dok je razumno
-// blizu, da bot ne bi menjao metu svaki tik i vrteo se u mestu.
-function chooseFood(bot, me, list) {
+// Ka najblizoj hrani, sa HISTEREZOM i SCOPE-om: gledaj samo hranu u dometu
+// (me.size*foodScope) i drzi prethodni cilj dok je razumno blizu -> bot ne
+// menja metu svaki tik i ne vrti se u mestu.
+function chooseFood(bot, me, list, cfg) {
   if (!list || !list.length) { bot._targetId = null; return null; }
+  const scope = me.size * ((cfg && cfg.foodScope) || 10);
+  const near = list.filter((f) => dist(me, f) < scope);
+  const pool = near.length ? near : list;
   let best = null, bd = Infinity;
-  for (const f of list) { const d = dist(me, f); if (d < bd) { bd = d; best = f; } }
+  for (const f of pool) { const d = dist(me, f); if (d < bd) { bd = d; best = f; } }
   if (bot._targetId != null) {
-    const old = list.find((e) => e.id === bot._targetId);
+    const old = pool.find((e) => e.id === bot._targetId);
     if (old) { const od = dist(me, old); if (od < bd * 1.5) { best = old; bd = od; } }
   }
   bot._targetId = best.id;
@@ -97,31 +101,44 @@ export function decide(bot, state, ctx) {
     return { respawn: true, note: 'mrtav/cekam spawn' };
   }
   const me = state.me;
+  const now = ctx.now || 0;
   const teammates = ctx.teamCenters.filter((c, i) => i !== bot.index && c);
   const s = scan(me, state.entities, cfg, teammates);
   const isKing = bot.index === ctx.kingIndex;
 
-  // Bezanje ima prioritet nad svime.
+  // Bezanje ima prioritet. LATCH protiv jittera: kad se pretnja pojavi,
+  // ostani u bekstvu jos fleeLatchMs i posle nego sto nakratko izadje iz
+  // dometa - da se ne prebacujes akcija/ne-akcija svaki tik.
   const avoid = avoidVector(me, s, cfg);
-  if (avoid.danger) {
-    return { dir: norm(avoid.v), feed: 0, note: 'bezim od pretnje' };
+  if (avoid.danger) { bot._fleeUntil = now + cfg.fleeLatchMs; bot._fleeVec = avoid.v; }
+  if (avoid.danger || (bot._fleeUntil && now < bot._fleeUntil)) {
+    const v = avoid.danger ? avoid.v : (bot._fleeVec || [1, 0]);
+    return { dir: norm(v), speed: 1, feed: 0, note: avoid.danger ? 'bezim od pretnje' : 'bezim (inercija)' };
   }
 
   if (isKing) {
-    // Kralj: sakupi timsku izbacenu masu (najvrednija hrana), pa bilo sta
-    // jestivo (hrana/plen). Split-kill ako je plen blizu i znatno manji.
+    // Kralj drzi masu NA HRPI: ne split-uje se (osim ako --kingSplit).
+    // Prvo dobaci malo mase sitnom suigracu (rotacija), pa kupi masu/hranu.
+    if (cfg.kingFeedback && me.size > 120) {
+      let t = null, td = Infinity;
+      for (const tm of teammates) {
+        if (tm.maxCell < me.size * 0.25) { const d = dist(me, tm); if (d < td) { td = d; t = tm; } }
+      }
+      if (t && td < me.size * 6) {
+        return { dir: norm(sub(t, me)), speed: 0.5, feed: 1, note: 'kralj dobacuje suigracu' };
+      }
+    }
     if (s.teamEject.length) {
-      const v = chooseFood(bot, me, s.teamEject);
+      const v = chooseFood(bot, me, s.teamEject, cfg);
       if (v) return { dir: v, feed: 0, note: 'kralj kupi masu' };
     }
     if (s.edible.length) {
       let best = null, bd = Infinity;
       for (const e of s.edible) { const d = dist(me, e); if (d < bd) { bd = d; best = e; } }
-      const v = chooseFood(bot, me, s.edible);
-      const doSplit = bd < (me.size + best.size) * 1.4 && me.size > best.size * 2.2;
+      const v = chooseFood(bot, me, s.edible, cfg);
+      const doSplit = cfg.kingSplit && bd < (me.size + best.size) * 1.4 && me.size > best.size * 2.2;
       return { dir: v, split: doSplit, feed: 0, note: doSplit ? 'kralj split-lov' : 'kralj jede' };
     }
-    // Nista u vidokrugu: idi ka centru mape.
     bot._targetId = null;
     const c = { x: (state.mapBounds.minx + state.mapBounds.maxx) / 2, y: (state.mapBounds.miny + state.mapBounds.maxy) / 2 };
     return { dir: norm(sub(c, me)), feed: 0, note: 'kralj trazi' };
@@ -130,7 +147,7 @@ export function decide(bot, state, ctx) {
   // ---- HRANILAC ----
   const king = ctx.teamCenters[ctx.kingIndex];
   if (!king) {
-    const fv = chooseFood(bot, me, s.edible);
+    const fv = chooseFood(bot, me, s.edible, cfg);
     return { dir: fv || [1, 0], feed: 0, note: 'nema kralja, jedem' };
   }
 
@@ -141,17 +158,22 @@ export function decide(bot, state, ctx) {
 
   // Dok sam premali da bih se split-ovao/isplatio, prvo rastem (jedem okolo).
   const readySize = Math.max(cfg.minSplitSize, kingSize * cfg.minFeedRatio);
-  if (me.size < readySize) {
-    const fv = chooseFood(bot, me, s.edible);
+  if (me.cellCount <= 1 && me.size < readySize) {
+    const fv = chooseFood(bot, me, s.edible, cfg);
     return { dir: fv || dirKing, feed: 0, note: 'rastem pre feed-a' };
   }
 
   if (cfg.feedMode === 'kamikaze') {
-    // KAMIKAZA: pridji kralju i SPLIT-uj se u njega (pola mase odleti, kralj
-    // je odmah pojede - brz transfer), pa se zrtvuj i restartuj. Split-ujem
-    // kad je razmak dovoljno mali da kralj uhvati odbaceni deo.
+    // Ako sam vec fragmentisan (vise segmenata) - NE split-uj vise (da se ne
+    // izmnozim u 16 delova); samo se ceo utrci u kralja da me pojede (masa
+    // ostaje na hrpi kod kralja).
+    if (me.cellCount > 1) {
+      return { dir: dirKing, speed: 1, note: 'ubacujem se u kralja' };
+    }
+    // Ceo sam: pridji i SPLIT-uj se JEDNOM u kralja (cooldown protiv mnozenja).
     const reach = (kingSize + me.size) * cfg.kamiReach;
-    if (dKing < reach) {
+    if (dKing < reach && now >= (bot._splitUntil || 0)) {
+      bot._splitUntil = now + cfg.splitCooldownMs;
       return { dir: dirKing, speed: 1, split: true, note: 'KAMIKAZA split u kralja' };
     }
     return { dir: dirKing, speed: 1, note: 'jurim kralja (kamikaza)' };
@@ -164,7 +186,7 @@ export function decide(bot, state, ctx) {
     return { dir: norm(scale(dirKing, -1)), speed: 1, feed: 0, note: 'odmicem od kralja' };
   }
   if (dKing > feedOuter) {
-    const fv = chooseFood(bot, me, s.edible);
+    const fv = chooseFood(bot, me, s.edible, cfg);
     const blended = fv ? norm(add(scale(dirKing, 0.85), scale(fv, 0.25))) : dirKing;
     return { dir: blended, feed: 0, note: 'idem ka kralju' };
   }
