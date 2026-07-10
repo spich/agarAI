@@ -1,0 +1,19 @@
+{
+  "name": "agarai",
+  "version": "0.1.0",
+  "description": "Trobotni agar.rs teaming simulator - vodi tri taba kao tri igraca koji jedan drugom dodaju masu i grade sliku okruzenja.",
+  "type": "module",
+  "bin": {
+    "agarai": "src/index.js"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "capture": "node src/index.js --capture --no-team"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "playwright": "^1.48.0"
+  }
+}
