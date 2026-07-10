@@ -13,8 +13,20 @@ function scale(v, s) { return [v[0] * s, v[1] * s]; }
 function dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
 function dot(a, b) { return a[0] * b[0] + a[1] * b[1]; }
 
+// Da li je celija zapravo saigrac (blizu poznatog centra saigraca)?
+// Igra ne zna za tim, pa saigrace prepoznajemo po poziciji da ih ne bismo
+// tretirali kao pretnju/plen (i da hranilac ne bezi od svog kralja).
+function isTeammate(e, teammates) {
+  for (const t of teammates) {
+    if (!t) continue;
+    const d = Math.hypot(e.x - t.x, e.y - t.y);
+    if (d < Math.max(e.size, t.size || 0) * 0.6 + 120) return true;
+  }
+  return false;
+}
+
 // Podeli okolne entitete na kategorije iz ugla "me".
-function scan(me, entities, cfg) {
+function scan(me, entities, cfg, teammates) {
   const threats = [];   // veci protivnici
   const prey = [];      // manji protivnici koje mogu da pojedem
   const food = [];      // pellet-i + tudja izbacena masa
@@ -28,6 +40,7 @@ function scan(me, entities, cfg) {
       if (e.isEjected) teamEject.push(e);
       continue;
     }
+    if (isTeammate(e, teammates)) continue;      // ignorisi svoje botove
     // ostalo = tudja "igracka" celija
     if (e.size > me.size * cfg.threatRatio) threats.push(e);
     else if (e.size < me.size * 0.9) prey.push(e);
@@ -79,7 +92,8 @@ export function decide(bot, state, ctx) {
     return { respawn: true, note: 'mrtav/cekam spawn' };
   }
   const me = state.me;
-  const s = scan(me, state.entities, cfg);
+  const teammates = ctx.teamCenters.filter((c, i) => i !== bot.index && c);
+  const s = scan(me, state.entities, cfg, teammates);
   const isKing = bot.index === ctx.kingIndex;
 
   // Bezanje ima prioritet nad svime.
@@ -122,23 +136,32 @@ export function decide(bot, state, ctx) {
   const dKing = len(toKing);
   const dirKing = norm(toKing);
 
-  // Ako sam premali, prvo malo porastem (kupim hranu ka kralju).
+  // KLJUCNO: kralj moze da POJEDE hranioca ako mu se priblizi previse.
+  // Zato hranilac ostaje van domasaja (safeDist) i odatle izbacuje masu.
+  const safeDist = (king.size || 0) * 1.15 + 50;
+
+  // Ako sam premali, prvo malo porastem (kupim hranu), ali NE ka kralju
+  // (da me ne pojede) - kupim hranu u okolini.
   if (me.size < cfg.minFeedSize) {
     const fv = foodVector(me, s.food);
-    // idi ka kralju ali skreni ka hrani usput
-    const blended = fv ? norm(add(scale(dirKing, 0.6), scale(fv, 0.6))) : dirKing;
-    return { dir: blended, feed: 0, note: 'rastem pre feed-a' };
+    if (dKing < safeDist) return { dir: norm(scale(dirKing, -1)), feed: 0, note: 'malen - odmicem od kralja' };
+    return { dir: fv || dirKing, feed: 0, note: 'rastem pre feed-a' };
+  }
+
+  if (dKing < safeDist) {
+    // Preblizu - kralj bi me pojeo. Odmakni se (ne hrani dok si u opasnosti).
+    return { dir: norm(scale(dirKing, -1)), feed: 0, note: 'odmicem od kralja' };
   }
 
   if (dKing > cfg.feedRange) {
     // Daleko: putuj ka kralju (kupi hranu usput).
     const fv = foodVector(me, s.food);
-    const blended = fv ? norm(add(scale(dirKing, 0.8), scale(fv, 0.3))) : dirKing;
+    const blended = fv ? norm(add(scale(dirKing, 0.85), scale(fv, 0.25))) : dirKing;
     return { dir: blended, feed: 0, note: 'idem ka kralju' };
   }
 
-  // Blizu kralja: nisani u njega i izbaci masu (W). Da bi masa otisla
-  // kralju, pravac misa mora da gadja kralja.
+  // U zoni hranjenja (safeDist < d < feedRange): nisani u kralja i izbaci
+  // masu. Masa leti ka kralju, a ja sam dovoljno daleko da me ne pojede.
   return { dir: dirKing, feed: cfg.ejectPerTick, note: 'HRANIM kralja' };
 }
 

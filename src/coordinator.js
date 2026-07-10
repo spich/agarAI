@@ -3,7 +3,7 @@
 
 import { decide, pickKing } from './strategy.js';
 import { mergeWorld, renderMap, drawScreen } from './map.js';
-import { sleep, botGetState, botCommand } from './browser.js';
+import { sleep, botGetState, botCommand, botRejoin } from './browser.js';
 
 // Heuristika: da li dekodirano stanje izgleda ispravno (pozicije unutar
 // granica mape). Ako ne, protokol agar.rs verovatno odstupa od dekodera.
@@ -57,8 +57,21 @@ export async function runCoordinator(fleet, cfg, log) {
     //    onda samo posmatramo i crtamo mapu).
     const notes = [];
     if (cfg.team) {
+      const now = Date.now();
       await Promise.all(bots.map(async (b, i) => {
-        const cmd = decide(b, states[i], ctx);
+        const st = states[i];
+        // Mrtav / nije jos u igri -> pokusaj respawn (usporeno da ne spamuje).
+        if (!st || !st.spawned) {
+          if (!b._lastRejoin || now - b._lastRejoin > 2500) {
+            b._lastRejoin = now;
+            notes.push(`${b.nick}:RESPAWN`);
+            await botRejoin(b, cfg).catch(() => {});
+          } else {
+            notes.push(`${b.nick}:cekam spawn`);
+          }
+          return;
+        }
+        const cmd = decide(b, st, ctx);
         notes.push(`${b.nick}:${cmd.note || '-'}`);
         await botCommand(b, cmd);
       }));

@@ -60,46 +60,92 @@ export async function launchFleet(cfg, log) {
   return { browser, context, bots };
 }
 
+// Tekst dugmadi za cookie/GDPR pristanak (agar.rs prikaze "Pristajem" i sl.).
+const CONSENT_RX = [
+  /svim.*pristaj/i, /pristaj/i, /prihva/i, /slaz|slaž/i, /saglas/i, /dozvoli/i,
+  /accept all/i, /accept/i, /agree|consent/i, /^u redu$/i, /^ok$/i, /nastavi/i, /razumem|razumijem/i,
+];
+const PLAY_RX = [/^play$/i, /play/i, /igraj/i, /^start$/i, /start game/i, /kreni/i, /^go$/i];
+
+// Klikni consent dugme u BILO KOM frame-u (CMP je cesto u iframe-u).
+export async function dismissConsent(page, log) {
+  for (const frame of page.frames()) {
+    let els;
+    try { els = await frame.$$('button, [role="button"], a, input[type="button"], input[type="submit"]'); }
+    catch (_) { continue; }
+    for (const el of els) {
+      let txt = '';
+      try {
+        txt = (await el.innerText({ timeout: 150 })).trim();
+        if (!txt) txt = (await el.getAttribute('value')) || '';
+        txt = txt.trim();
+      } catch (_) { continue; }
+      if (!txt || txt.length > 40) continue;
+      if (CONSENT_RX.some((r) => r.test(txt))) {
+        const vis = await el.isVisible().catch(() => false);
+        if (vis) {
+          await el.click({ timeout: 1500 }).catch(() => {});
+          if (log) log(`  consent: kliknuo "${txt}"`);
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+// Unesi nadimak + klikni Play (trazi po tekstu i u frame-ovima).
+async function fillNickAndPlay(page, nick, cfg, log) {
+  const nickEl = await page.$(cfg.nickSelector).catch(() => null);
+  if (nickEl) {
+    await nickEl.click({ timeout: 1500 }).catch(() => {});
+    await nickEl.fill(nick).catch(() => {});
+  }
+  for (const frame of page.frames()) {
+    let els;
+    try { els = await frame.$$('button, [role="button"], a, input[type="button"], input[type="submit"], div'); }
+    catch (_) { continue; }
+    for (const el of els) {
+      let txt = '';
+      try { txt = (await el.innerText({ timeout: 120 })).trim(); } catch (_) { continue; }
+      if (!txt || txt.length > 24) continue;
+      if (PLAY_RX.some((r) => r.test(txt))) {
+        const vis = await el.isVisible().catch(() => false);
+        if (vis) { await el.click({ timeout: 1500 }).catch(() => {}); if (log) log(`  play: "${txt}"`); return true; }
+      }
+    }
+  }
+  // Fallback: selektor iz configa, pa Enter/Space.
+  const el = await page.$(cfg.playSelector).catch(() => null);
+  if (el) { await el.click({ timeout: 1500 }).catch(() => {}); return true; }
+  await page.keyboard.press('Enter').catch(() => {});
+  await page.keyboard.press('Space').catch(() => {});
+  return false;
+}
+
 async function joinGame(bot, cfg, log) {
   const { page, index, nick } = bot;
 
+  // Prvo consent - moze da iskoci malo posle ucitavanja, pa probaj vise puta.
+  for (let i = 0; i < 8; i++) {
+    const done = await dismissConsent(page, i === 0 ? (t => log(`[tab${index}]${t}`)) : null);
+    if (done) { log(`[tab${index}] consent prihvacen`); break; }
+    await sleep(400);
+  }
+
   if (cfg.manualJoin) {
-    log(`[tab${index}] MANUAL-JOIN: udji sam u igru u ovom tabu (unesi "${nick}" i klikni Play).`);
+    log(`[tab${index}] MANUAL-JOIN: consent je sredjen; ako treba, klikni Play sam.`);
     return;
   }
+  await fillNickAndPlay(page, nick, cfg, (t) => log(`[tab${index}]${t}`));
+  log(`[tab${index}] auto-join: nadimak "${nick}" + Play`);
+}
 
-  // Pokusaj auto-join: unesi nadimak, klikni play. Selektori su podesivi
-  // jer se UI razlikuje po klonu; ako ne uspe, padamo na cekanje spawna.
-  try {
-    const nickEl = await page.$(cfg.nickSelector);
-    if (nickEl) {
-      await nickEl.click({ timeout: 2000 }).catch(() => {});
-      await nickEl.fill('').catch(() => {});
-      await nickEl.type(nick, { delay: 30 }).catch(() => {});
-      log(`[tab${index}] uneo nadimak "${nick}"`);
-    } else {
-      log(`[tab${index}] polje za nadimak nije nadjeno (${cfg.nickSelector}) - preskacem`);
-    }
-
-    // Nadji "Play" dugme: prvo probaj tekstualno, pa selektor.
-    let clicked = false;
-    for (const sel of ['text=/play/i', 'text=/igraj/i', 'text=/start/i', cfg.playSelector]) {
-      const el = await page.$(sel).catch(() => null);
-      if (el) {
-        await el.click({ timeout: 2000 }).catch(() => {});
-        clicked = true;
-        log(`[tab${index}] kliknuo Play (${sel})`);
-        break;
-      }
-    }
-    if (!clicked) {
-      // Poslednja opcija: Enter na polju/telu.
-      await page.keyboard.press('Enter').catch(() => {});
-      log(`[tab${index}] Play dugme nije nadjeno - probao Enter`);
-    }
-  } catch (e) {
-    log(`[tab${index}] auto-join greska: ${e.message}`);
-  }
+// Respawn: kad bot umre, ponovo sredi consent (za svaki slucaj) i klikni Play.
+export async function botRejoin(bot, cfg) {
+  const { page, nick } = bot;
+  await dismissConsent(page, null).catch(() => {});
+  await fillNickAndPlay(page, nick, cfg, null).catch(() => {});
 }
 
 // Igra moze biti u iframe-u: nadji frame u kom je hook zakacio socket.
