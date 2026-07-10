@@ -54,7 +54,9 @@ export function buildConfig() {
     // Parametri strategije. RELATIVNI su (u odnosu na velicinu celije), da
     // bi radili na bilo kojoj skali klona (agar.rs koristi vece brojeve).
     threatRatio: num(A.threatRatio, 2.0),  // pretnja tek ako je >2x (moze split-lov); manji te ne stize
-    virusRatio: num(A.virusRatio, 1.0),    // izbegavaj virus ako sam veci od njega * ovo
+    virusRatio: num(A.virusRatio, 1.0),    // izbegavaj virus samo ako sam veci od njega * ovo
+    virusAvoid: num(A.virusAvoid, 1.15),   // tesan radijus oko virusa = me.size*ovo (+ pola virusa)
+    virusPush: num(A.virusPush, 1.1),      // jacina blagog skretanja oko virusa (prolazi blizu)
     fleeFactor: num(A.fleeFactor, 2.25),   // beži ako je pretnja bliza od (moja+njegova velicina)*ovo
     feedFactor: num(A.feedFactor, 9),      // spoljna granica zone hranjenja = kralj.velicina * ovo
     safeFactor: num(A.safeFactor, 1.25),   // bezbedna distanca od kralja = kralj.velicina * ovo + margin

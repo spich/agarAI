@@ -48,32 +48,33 @@ function scan(me, entities, cfg, teammates) {
   return { threats, edible, teamEject, viruses };
 }
 
-// Vektor bezanja od pretnji (i opasnih viruseva ako sam velik).
-// Radijus opasnosti je RELATIVAN: skalira se sa velicinama celija.
+// Odvojeno: pretnje (pravo bekstvo) i virusi (tesno zaobilazenje).
+// Virus te pukne samo ako si VECI od njega i dodirnes ga, pa je dovoljan
+// uzak radijus (~tvoj radijus + mali bafer) - ne siroki obilazak.
 function avoidVector(me, s, cfg) {
   let v = [0, 0];
-  let danger = false;
+  let threat = false;
   for (const t of s.threats) {
     const d = dist(me, t);
-    const r = (me.size + t.size) * cfg.fleeFactor;   // relativni radijus opasnosti
+    const r = (me.size + t.size) * cfg.fleeFactor;
     if (d < r) {
-      const away = norm(sub(me, t));
-      v = add(v, scale(away, (r - d) / r));
-      danger = true;
+      v = add(v, scale(norm(sub(me, t)), (r - d) / r));
+      threat = true;
     }
   }
-  // Virus je opasan samo ako sam dovoljno veci od njega (podeli me).
-  for (const vir of s.viruses) {
-    if (me.size > vir.size * cfg.virusRatio) {
-      const d = dist(me, vir);
-      const r = (me.size + vir.size) * 1.5;
+  let vir = [0, 0];
+  let virusNear = false;
+  for (const g of s.viruses) {
+    if (me.size > g.size * cfg.virusRatio) {           // samo ako me virus moze podeliti
+      const d = dist(me, g);
+      const r = me.size * cfg.virusAvoid + g.size * 0.5; // tesno oko virusa
       if (d < r) {
-        v = add(v, scale(norm(sub(me, vir)), (r - d) / r * 0.8));
-        danger = true;
+        vir = add(vir, scale(norm(sub(me, g)), (r - d) / r));
+        virusNear = true;
       }
     }
   }
-  return { v, danger };
+  return { v, threat, vir, virusNear };
 }
 
 // Ka najblizoj hrani, sa HISTEREZOM i SCOPE-om: gledaj samo hranu u dometu
@@ -95,7 +96,19 @@ function chooseFood(bot, me, list, cfg) {
 }
 
 // Odluka za jednog bota. Vraca {dir:[x,y], feed, split, note}.
+// Javna odluka: pozovi jezgro pa primeni BLAGO zaobilazenje virusa na
+// pravac (osim kad bezimo/ne krecemo se) - da bot prodje blizu virusa
+// umesto da pravi siroki obilazak.
 export function decide(bot, state, ctx) {
+  const res = decideCore(bot, state, ctx);
+  if (res && res.dir && bot._virusVec && !res._flee) {
+    const push = (ctx.cfg && ctx.cfg.virusPush) || 1.1;
+    res.dir = norm([res.dir[0] + bot._virusVec[0] * push, res.dir[1] + bot._virusVec[1] * push]);
+  }
+  return res;
+}
+
+function decideCore(bot, state, ctx) {
   const { cfg } = ctx;
   if (!state || !state.spawned || !state.me) {
     return { respawn: true, note: 'mrtav/cekam spawn' };
@@ -110,10 +123,11 @@ export function decide(bot, state, ctx) {
   // ostani u bekstvu jos fleeLatchMs i posle nego sto nakratko izadje iz
   // dometa - da se ne prebacujes akcija/ne-akcija svaki tik.
   const avoid = avoidVector(me, s, cfg);
-  if (avoid.danger) { bot._fleeUntil = now + cfg.fleeLatchMs; bot._fleeVec = avoid.v; }
-  if (avoid.danger || (bot._fleeUntil && now < bot._fleeUntil)) {
-    const v = avoid.danger ? avoid.v : (bot._fleeVec || [1, 0]);
-    return { dir: norm(v), speed: 1, feed: 0, note: avoid.danger ? 'bezim od pretnje' : 'bezim (inercija)' };
+  bot._virusVec = avoid.virusNear ? avoid.vir : null;   // blago skretanje se primenjuje u decide()
+  if (avoid.threat) { bot._fleeUntil = now + cfg.fleeLatchMs; bot._fleeVec = avoid.v; }
+  if (avoid.threat || (bot._fleeUntil && now < bot._fleeUntil)) {
+    const v = avoid.threat ? avoid.v : (bot._fleeVec || [1, 0]);
+    return { dir: norm(v), speed: 1, feed: 0, _flee: true, note: avoid.threat ? 'bezim od pretnje' : 'bezim (inercija)' };
   }
 
   if (isKing) {
