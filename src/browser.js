@@ -30,6 +30,7 @@ export async function launchFleet(cfg, log) {
   // i u svakom frame-u ukljucujuci iframe klona).
   const opt = JSON.stringify({
     capture: cfg.capture,
+    sniff: cfg.sniff,
     moveRadius: cfg.moveRadius,
     control: cfg.control,
     debug: cfg.debug,
@@ -42,8 +43,11 @@ export async function launchFleet(cfg, log) {
   for (let i = 0; i < cfg.count; i++) {
     const page = await context.newPage();
     const nick = cfg.nicks[i] || `bot${i + 1}`;
-    if (cfg.debug) {
-      page.on('console', (m) => log(`[tab${i} console] ${m.text()}`));
+    if (cfg.debug || cfg.sniff) {
+      page.on('console', (m) => {
+        const t = m.text();
+        if (cfg.debug || t.startsWith('AGARAI')) log(`[tab${i}] ${t}`);
+      });
     }
     await page.goto(cfg.url, { waitUntil: 'domcontentloaded' }).catch((e) => {
       log(`[tab${i}] goto greska: ${e.message}`);

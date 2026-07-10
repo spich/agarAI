@@ -22,8 +22,20 @@
   // -------- podesavanja koja stranica dobija od Node-a (opciono) --------
   const OPT = (window.__AGARAI_OPT || {});
   const CAPTURE = !!OPT.capture;
+  const SNIFF = !!OPT.sniff;                 // ispisuj hex paketa u konzolu uzivo
   const MOVE_RADIUS = OPT.moveRadius || 320;
   const CONTROL = OPT.control || 'input';
+
+  // Sniffer: ispisi prvih par paketa svakog opcode-a direktno u konzolu
+  // (Playwright to prosledi u terminal). Najpouzdaniji nacin da vidimo bajtove.
+  const _sniffN = {};
+  function sniff(dir, op, len, hex) {
+    if (!SNIFF) return;
+    const k = dir + op;
+    if ((_sniffN[k] || 0) >= 4) return;
+    _sniffN[k] = (_sniffN[k] || 0) + 1;
+    try { console.log('AGARAI ' + dir + ' op' + op + ' len=' + len + ' ' + hex); } catch (_) {}
+  }
 
   // ----------------------------- stanje ----------------------------------
   const cells = new Map();       // id -> {id,x,y,size,r,g,b,flags,name,isVirus,isFood,isEjected,isMine,t}
@@ -158,10 +170,14 @@
     if (!(buf instanceof ArrayBuffer)) {
       if (buf && buf.buffer) buf = buf.buffer; else return;
     }
-    if (CAPTURE) {
+    if (CAPTURE || SNIFF) {
       const arr = new Uint8Array(buf);
-      captures.push({ t: Date.now(), dir: 'in', op: arr[0], len: arr.length, hex: bytesToHex(arr.slice(0, 256)) });
-      if (captures.length > 1000) captures.shift();
+      const hex = bytesToHex(arr.slice(0, 256));
+      if (CAPTURE) {
+        captures.push({ t: Date.now(), dir: 'in', op: arr[0], len: arr.length, hex });
+        if (captures.length > 1000) captures.shift();
+      }
+      sniff('IN', arr[0], arr.length, hex);
     }
     const view = new DataView(buf);
     if (view.byteLength < 1) return;
@@ -192,9 +208,12 @@
         onMessage(ev.data);
       }
     });
-    ws.addEventListener('open', () => { if (OPT.debug) console.log('[agarai] WS open', url); });
-    if (CAPTURE) {
-      captures.push({ t: Date.now(), dir: 'url', url: String(url) });
+    ws.addEventListener('open', () => {
+      if (OPT.debug) console.log('[agarai] WS open', url);
+      if (SNIFF) { try { console.log('AGARAI URL ' + String(url)); } catch (_) {} }
+    });
+    if (CAPTURE || SNIFF) {
+      if (CAPTURE) captures.push({ t: Date.now(), dir: 'url', url: String(url) });
       const origSend = ws.send.bind(ws);
       ws.send = function (d) {
         try {
@@ -202,8 +221,12 @@
           if (!(b instanceof ArrayBuffer) && b && b.buffer) b = b.buffer;
           if (b instanceof ArrayBuffer) {
             const a = new Uint8Array(b);
-            captures.push({ t: Date.now(), dir: 'out', op: a[0], len: a.length, hex: bytesToHex(a.slice(0, 128)) });
-            if (captures.length > 1000) captures.shift();
+            const hex = bytesToHex(a.slice(0, 128));
+            if (CAPTURE) {
+              captures.push({ t: Date.now(), dir: 'out', op: a[0], len: a.length, hex });
+              if (captures.length > 1000) captures.shift();
+            }
+            sniff('OUT', a[0], a.length, hex);
           }
         } catch (_) {}
         return origSend(d);

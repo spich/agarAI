@@ -79,9 +79,11 @@ export function buildConfig() {
     // Dijagnostika: ispisi jednom razlozeno stanje sveta (velicine hrane,
     // igraca, granice mape) da bi se pragovi fino nastelovali.
     diag: A.diag === true,
+    // Sniff: ispisi hex paketa uzivo u terminal (za rekonstrukciju protokola).
+    sniff: A.sniff === true,
   };
-  // Diag ispisuje tekst koji bi mapa obrisala -> ugasi mapu kad je diag.
-  if (cfg.diag) cfg.map = false;
+  // Diag/sniff ispisuju tekst koji bi mapa obrisala -> ugasi mapu.
+  if (cfg.diag || cfg.sniff) cfg.map = false;
   return cfg;
 }
 
