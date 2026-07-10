@@ -160,8 +160,8 @@
     }
     if (CAPTURE) {
       const arr = new Uint8Array(buf);
-      captures.push({ t: Date.now(), dir: 'in', hex: bytesToHex(arr.slice(0, 64)), len: arr.length });
-      if (captures.length > 500) captures.shift();
+      captures.push({ t: Date.now(), dir: 'in', op: arr[0], len: arr.length, hex: bytesToHex(arr.slice(0, 256)) });
+      if (captures.length > 1000) captures.shift();
     }
     const view = new DataView(buf);
     if (view.byteLength < 1) return;
@@ -193,6 +193,22 @@
       }
     });
     ws.addEventListener('open', () => { if (OPT.debug) console.log('[agarai] WS open', url); });
+    if (CAPTURE) {
+      captures.push({ t: Date.now(), dir: 'url', url: String(url) });
+      const origSend = ws.send.bind(ws);
+      ws.send = function (d) {
+        try {
+          let b = d;
+          if (!(b instanceof ArrayBuffer) && b && b.buffer) b = b.buffer;
+          if (b instanceof ArrayBuffer) {
+            const a = new Uint8Array(b);
+            captures.push({ t: Date.now(), dir: 'out', op: a[0], len: a.length, hex: bytesToHex(a.slice(0, 128)) });
+            if (captures.length > 1000) captures.shift();
+          }
+        } catch (_) {}
+        return origSend(d);
+      };
+    }
     return ws;
   }
   HookedWS.prototype = NativeWS.prototype;

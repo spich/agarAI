@@ -94,13 +94,22 @@ legenda: @kralj A/B/C tim  X veći  o manji  V virus  . hrana  + izbačena masa
 ## Ako mapa nije tačna (prilagođavanje protokola)
 
 agar.rs je klon — ako mu se binarni format malo razlikuje, pozicije/entiteti
-na mapi će izgledati kao smeće. Tada:
+na mapi će izgledati kao smeće. Alat to **sam prepoznaje** i ispiše upozorenje
+("dekodirane pozicije izgledaju netačno"). Tada:
 
 1. Pokreni sa `--capture`, uđi u igru na par sekundi, pa Ctrl+C.
-2. Pogledaj `captures/tab0-*.json` — prvih 64 bajta svakog frejma u hexu.
+2. Alat snimi `captures/tab0-*.json` — beleži i **dolazne** (server→klijent)
+   i **odlazne** (klijent→server) frejmove sa opcode-om, dužinom i hexom, plus
+   WebSocket URL. Odlazni frejmovi otkrivaju njihove move/split/eject opcode-e.
 3. Prilagodi offsete u `decodeUpdate()` unutar `src/inject/agarhook.js`
    (glavne varijacije među klonovima: `int16` vs `int32` za x/y, i redosled
    boje/imena u odnosu na flag bajt). Sve je na jednom mestu i komentarisano.
+
+> Igra u iframe-u? Podržano — hook se ubacuje u sve frame-ove, a koordinator
+> automatski nađe onaj u kom je socket igre.
+
+Ako mi pošalješ `captures/tab0-*.json`, mogu da ti podesim dekoder tačno za
+agar.rs (i dolazni format i klijent→server opcode-e za `--control protocol`).
 
 Selektori za auto-join (polje za nadimak, Play dugme) se podešavaju kroz
 `--nickSelector` / `--playSelector` u `src/config.js`.

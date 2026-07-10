@@ -4,7 +4,7 @@
 import fs from 'fs';
 import path from 'path';
 import { buildConfig, HELP } from './config.js';
-import { launchFleet, waitSpawn, sleep } from './browser.js';
+import { launchFleet, waitSpawn, botDumpCaptures } from './browser.js';
 import { runCoordinator } from './coordinator.js';
 
 function log(...a) { console.log('[agarai]', ...a); }
@@ -52,8 +52,7 @@ async function dumpCaptures(fleet, cfg, log) {
   try {
     fs.mkdirSync(cfg.captureDir, { recursive: true });
     for (const b of fleet.bots) {
-      const caps = await b.page.evaluate(() => window.__AGARAI && window.__AGARAI._dumpCaptures())
-        .catch(() => []);
+      const caps = await botDumpCaptures(b);
       const file = path.join(cfg.captureDir, `tab${b.index}-${b.nick}.json`);
       fs.writeFileSync(file, JSON.stringify(caps || [], null, 2));
       log(`snimljen capture: ${file} (${(caps || []).length} frejmova)`);

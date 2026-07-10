@@ -100,12 +100,48 @@ async function joinGame(bot, cfg, log) {
   }
 }
 
+// Igra moze biti u iframe-u: nadji frame u kom je hook zakacio socket.
+// Kesiramo ga po botu i re-biramo ako zakaze.
+async function pickFrame(bot) {
+  if (bot.frame) {
+    const ok = await bot.frame.evaluate(() => !!(window.__AGARAI && window.__AGARAI.ready))
+      .catch(() => false);
+    if (ok) return bot.frame;
+    bot.frame = null;
+  }
+  // Prvo probaj frame koji ima aktivan socket, pa bilo koji sa hookom.
+  let fallback = null;
+  for (const f of bot.page.frames()) {
+    const st = await f.evaluate(() => window.__AGARAI && window.__AGARAI.getState()).catch(() => null);
+    if (st && st.connected) { bot.frame = f; return f; }
+    if (st && !fallback) fallback = f;
+  }
+  return fallback || bot.page.mainFrame();
+}
+
+// Procitaj stanje bota (kroz pravi frame).
+export async function botGetState(bot) {
+  const f = await pickFrame(bot);
+  return f.evaluate(() => window.__AGARAI && window.__AGARAI.getState()).catch(() => null);
+}
+
+// Posalji komandu botu (kroz pravi frame).
+export async function botCommand(bot, cmd) {
+  const f = await pickFrame(bot);
+  return f.evaluate((c) => window.__AGARAI && window.__AGARAI.command(c), cmd).catch(() => {});
+}
+
+// Izvuci snimljene frejmove (iz frame-a sa socketom).
+export async function botDumpCaptures(bot) {
+  const f = await pickFrame(bot);
+  return f.evaluate(() => window.__AGARAI && window.__AGARAI._dumpCaptures()).catch(() => []);
+}
+
 // Ceka da bot dobije svoju celiju (spawned) do timeout-a.
 export async function waitSpawn(bot, cfg, log) {
   const deadline = Date.now() + cfg.autoJoinTimeoutMs;
   while (Date.now() < deadline) {
-    const st = await bot.page.evaluate(() => window.__AGARAI && window.__AGARAI.getState())
-      .catch(() => null);
+    const st = await botGetState(bot);
     if (st && st.spawned) { bot.spawned = true; return true; }
     if (st && st.connected && cfg.debug) log(`[tab${bot.index}] povezan, cekam spawn...`);
     await sleep(400);
