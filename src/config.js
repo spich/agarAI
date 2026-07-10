@@ -53,13 +53,18 @@ export function buildConfig() {
 
     // Parametri strategije. RELATIVNI su (u odnosu na velicinu celije), da
     // bi radili na bilo kojoj skali klona (agar.rs koristi vece brojeve).
-    threatRatio: num(A.threatRatio, 1.15), // protivnik veci od mene * ovo = pretnja
+    threatRatio: num(A.threatRatio, 2.0),  // pretnja tek ako je >2x (moze split-lov); manji te ne stize
     virusRatio: num(A.virusRatio, 1.0),    // izbegavaj virus ako sam veci od njega * ovo
-    fleeFactor: num(A.fleeFactor, 4.5),    // beži ako je pretnja bliza od (moja+njegova velicina)*ovo
+    fleeFactor: num(A.fleeFactor, 2.25),   // beži ako je pretnja bliza od (moja+njegova velicina)*ovo
     feedFactor: num(A.feedFactor, 9),      // spoljna granica zone hranjenja = kralj.velicina * ovo
     safeFactor: num(A.safeFactor, 1.25),   // bezbedna distanca od kralja = kralj.velicina * ovo + margin
-    minFeedRatio: num(A.minFeedRatio, 0.2),// hranilac manji od kralja*ovo prvo raste, pa hrani
-    ejectPerTick: num(A.eject, 2),         // koliko W impulsa po tiku kad hrani
+    minFeedRatio: num(A.minFeedRatio, 0.15),// hranilac manji od kralja*ovo prvo raste, pa hrani
+    ejectPerTick: num(A.eject, 2),         // koliko W impulsa po tiku (eject rezim)
+    // Nacin hranjenja: 'kamikaze' (split u kralja, brzo, pa restart) ili
+    // 'eject' (sporo izbacivanje mase sa bezbedne distance).
+    feedMode: A.feedmode || 'kamikaze',
+    minSplitSize: num(A.minSplitSize, 45), // ispod ove velicine hranilac ne split-uje (prvo raste)
+    kamiReach: num(A.kamiReach, 1.7),      // split kad je razmak < (kralj+ja velicine)*ovo
 
     // Kontrola: 'input' (sinteticki mis/tastatura, najotpornije)
     //           'protocol' (salji pakete direktno preko socketa)

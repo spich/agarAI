@@ -26,22 +26,24 @@ function isTeammate(e, teammates) {
 }
 
 // Podeli okolne entitete na kategorije iz ugla "me".
-// KLJUCNO: "edible" = sve sto je manje od mene (hrana, izbacena masa, manji
-// igraci) bez obzira na apsolutnu velicinu -> radi na bilo kojoj skali klona.
+// KLJUCNO: "edible" mora biti stvarno MANJE od mene, inace bot juri hranu
+// koju ne moze da pojede. Pellet-e (isFood, mala masa) tolerisemo malo vece.
 function scan(me, entities, cfg, teammates) {
   const threats = [];   // veci protivnici
-  const edible = [];    // sve sto mogu da pojedem
+  const edible = [];    // sve sto realno mogu da pojedem
   const teamEject = []; // izbacena masa (najvrednija hrana za kralja)
   const viruses = [];
+  const eatCap = me.size * 0.9;       // plen/masa: moram biti veci
+  const foodCap = me.size * 1.15;     // pellet: mala masa, moze i malo veci
   for (const e of entities) {
     if (e.isMine) continue;
     if (e.isVirus) { viruses.push(e); continue; }
-    if (e.isEjected) { teamEject.push(e); edible.push(e); continue; }
+    if (e.isEjected) { teamEject.push(e); if (e.size < eatCap) edible.push(e); continue; }
     if (isTeammate(e, teammates)) continue;      // ignorisi svoje botove
-    if (e.isFood) { edible.push(e); continue; }
-    // igracka celija: veca = pretnja, manja = plen (jestivo)
+    if (e.isFood) { if (e.size < foodCap) edible.push(e); continue; }
+    // igracka celija: veca = pretnja, dovoljno manja = plen (jestivo)
     if (e.size > me.size * cfg.threatRatio) threats.push(e);
-    else if (e.size < me.size * 0.9) edible.push(e);
+    else if (e.size < eatCap) edible.push(e);
   }
   return { threats, edible, teamEject, viruses };
 }
@@ -74,15 +76,17 @@ function avoidVector(me, s, cfg) {
   return { v, danger };
 }
 
-// Ka najblizoj hrani (ili tezistu bliske grupe hrane).
-function foodVector(me, food) {
-  if (!food.length) return null;
+// Ka najblizoj hrani, sa HISTEREZOM: drzi prethodni cilj dok je razumno
+// blizu, da bot ne bi menjao metu svaki tik i vrteo se u mestu.
+function chooseFood(bot, me, list) {
+  if (!list || !list.length) { bot._targetId = null; return null; }
   let best = null, bd = Infinity;
-  for (const f of food) {
-    const d = dist(me, f);
-    if (d < bd) { bd = d; best = f; }
+  for (const f of list) { const d = dist(me, f); if (d < bd) { bd = d; best = f; } }
+  if (bot._targetId != null) {
+    const old = list.find((e) => e.id === bot._targetId);
+    if (old) { const od = dist(me, old); if (od < bd * 1.5) { best = old; bd = od; } }
   }
-  if (!best) return null;
+  bot._targetId = best.id;
   return norm(sub(best, me));
 }
 
@@ -107,17 +111,18 @@ export function decide(bot, state, ctx) {
     // Kralj: sakupi timsku izbacenu masu (najvrednija hrana), pa bilo sta
     // jestivo (hrana/plen). Split-kill ako je plen blizu i znatno manji.
     if (s.teamEject.length) {
-      const v = foodVector(me, s.teamEject);
+      const v = chooseFood(bot, me, s.teamEject);
       if (v) return { dir: v, feed: 0, note: 'kralj kupi masu' };
     }
     if (s.edible.length) {
       let best = null, bd = Infinity;
       for (const e of s.edible) { const d = dist(me, e); if (d < bd) { bd = d; best = e; } }
-      const v = norm(sub(best, me));
+      const v = chooseFood(bot, me, s.edible);
       const doSplit = bd < (me.size + best.size) * 1.4 && me.size > best.size * 2.2;
       return { dir: v, split: doSplit, feed: 0, note: doSplit ? 'kralj split-lov' : 'kralj jede' };
     }
     // Nista u vidokrugu: idi ka centru mape.
+    bot._targetId = null;
     const c = { x: (state.mapBounds.minx + state.mapBounds.maxx) / 2, y: (state.mapBounds.miny + state.mapBounds.maxy) / 2 };
     return { dir: norm(sub(c, me)), feed: 0, note: 'kralj trazi' };
   }
@@ -125,52 +130,64 @@ export function decide(bot, state, ctx) {
   // ---- HRANILAC ----
   const king = ctx.teamCenters[ctx.kingIndex];
   if (!king) {
-    const fv = foodVector(me, s.edible);
+    const fv = chooseFood(bot, me, s.edible);
     return { dir: fv || [1, 0], feed: 0, note: 'nema kralja, jedem' };
   }
 
   const toKing = sub(king, me);
   const dKing = len(toKing);
   const dirKing = norm(toKing);
+  const kingSize = king.size || 0;
 
-  // Bezbedna distanca i zona hranjenja - RELATIVNE u odnosu na velicinu kralja.
-  const safeDist = (king.size || 0) * cfg.safeFactor + Math.max(40, me.size);
-  const feedOuter = (king.size || 0) * cfg.feedFactor;
-
-  // Ako sam mnogo manji od kralja, prvo rastem (jedem u okolini), NE ka kralju.
-  if (me.size < (king.size || 0) * cfg.minFeedRatio) {
-    if (dKing < safeDist) return { dir: norm(scale(dirKing, -1)), feed: 0, note: 'malen - odmicem' };
-    const fv = foodVector(me, s.edible);
+  // Dok sam premali da bih se split-ovao/isplatio, prvo rastem (jedem okolo).
+  const readySize = Math.max(cfg.minSplitSize, kingSize * cfg.minFeedRatio);
+  if (me.size < readySize) {
+    const fv = chooseFood(bot, me, s.edible);
     return { dir: fv || dirKing, feed: 0, note: 'rastem pre feed-a' };
   }
 
-  if (dKing < safeDist) {
-    // Preblizu - kralj bi me pojeo. Odmakni se.
-    return { dir: norm(scale(dirKing, -1)), feed: 0, note: 'odmicem od kralja' };
+  if (cfg.feedMode === 'kamikaze') {
+    // KAMIKAZA: pridji kralju i SPLIT-uj se u njega (pola mase odleti, kralj
+    // je odmah pojede - brz transfer), pa se zrtvuj i restartuj. Split-ujem
+    // kad je razmak dovoljno mali da kralj uhvati odbaceni deo.
+    const reach = (kingSize + me.size) * cfg.kamiReach;
+    if (dKing < reach) {
+      return { dir: dirKing, speed: 1, split: true, note: 'KAMIKAZA split u kralja' };
+    }
+    return { dir: dirKing, speed: 1, note: 'jurim kralja (kamikaza)' };
   }
 
+  // ---- EJECT rezim (alternativa): hrani W-om sa bezbedne distance ----
+  const safeDist = kingSize * cfg.safeFactor + Math.max(40, me.size);
+  const feedOuter = kingSize * cfg.feedFactor;
+  if (dKing < safeDist * 0.9) {
+    return { dir: norm(scale(dirKing, -1)), speed: 1, feed: 0, note: 'odmicem od kralja' };
+  }
   if (dKing > feedOuter) {
-    // Daleko: putuj ka kralju (kupi jestivo usput).
-    const fv = foodVector(me, s.edible);
+    const fv = chooseFood(bot, me, s.edible);
     const blended = fv ? norm(add(scale(dirKing, 0.85), scale(fv, 0.25))) : dirKing;
     return { dir: blended, feed: 0, note: 'idem ka kralju' };
   }
-
-  // U zoni hranjenja: nisani u kralja i izbaci masu.
-  return { dir: dirKing, feed: cfg.ejectPerTick, note: 'HRANIM kralja' };
+  return { dir: dirKing, speed: 0.28, feed: cfg.ejectPerTick, note: 'HRANIM kralja' };
 }
 
-// Izbor kralja: konfigurisan indeks ili auto = najveca masa.
-export function pickKing(cfg, teamCenters) {
+// Izbor kralja. Auto = bot sa najvecim POJEDINACNIM blobom (maxCell), ne
+// ukupnom masom - da fragmentisan bot (posle split-a) ne ostane kralj dok
+// mu se masa ne spoji. Histereza da se kruna ne prebacuje svaki tik.
+export function pickKing(cfg, teamCenters, prevKing) {
   if (cfg.king !== 'auto') {
     const k = Number(cfg.king);
     return Number.isFinite(k) ? k : 0;
   }
-  let best = 0, bm = -1;
+  const val = (c) => (c ? (c.maxCell || c.size || 0) : -1);
+  let best = 0, bv = -1;
   for (let i = 0; i < teamCenters.length; i++) {
-    const c = teamCenters[i];
-    const m = c ? c.mass : -1;
-    if (m > bm) { bm = m; best = i; }
+    const v = val(teamCenters[i]);
+    if (v > bv) { bv = v; best = i; }
+  }
+  // Zadrzi trenutnog kralja ako je i dalje blizu najboljeg (izbegni treperenje).
+  if (prevKing != null && teamCenters[prevKing] && val(teamCenters[prevKing]) >= bv * 0.85) {
+    return prevKing;
   }
   return best;
 }

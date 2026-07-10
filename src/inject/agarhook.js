@@ -299,16 +299,19 @@
   }
 
   // ---- javne akcije ----
-  function move(nx, ny) {
-    // nx,ny = normalizovan pravac (-1..1) u prostoru sveta (= ekran, y dole)
+  // speed (0..1): koliko daleko od centra stavljamo mis = koliko brzo idemo.
+  // Izbacaj mase (W) ide u pravcu misa bez obzira na ovu udaljenost, pa
+  // mali speed = sporo prilazenje uz izbacivanje ka cilju.
+  function move(nx, ny, speed) {
     const len = Math.hypot(nx, ny) || 1;
     nx /= len; ny /= len;
+    const s = (typeof speed === 'number') ? Math.max(0.06, Math.min(1, speed)) : 1;
     if (CONTROL === 'protocol') {
       const me = myCenter();
-      if (me) sendMoveProtocol(me.x + nx * 2000, me.y + ny * 2000);
+      if (me) sendMoveProtocol(me.x + nx * 2000 * s, me.y + ny * 2000 * s);
     } else {
-      const cx = window.innerWidth / 2 + nx * MOVE_RADIUS;
-      const cy = window.innerHeight / 2 + ny * MOVE_RADIUS;
+      const cx = window.innerWidth / 2 + nx * MOVE_RADIUS * s;
+      const cy = window.innerHeight / 2 + ny * MOVE_RADIUS * s;
       dispatchMouse(cx, cy);
     }
   }
@@ -330,15 +333,18 @@
 
   // -------------------------- citanje stanja ----------------------------
   function myCenter() {
-    let sx = 0, sy = 0, sm = 0, n = 0;
+    let sx = 0, sy = 0, sm = 0, n = 0, maxCell = 0;
     for (const id of ownedIds) {
       const c = cells.get(id);
       if (!c) continue;
       const m = c.size * c.size;
       sx += c.x * m; sy += c.y * m; sm += m; n++;
+      if (c.size > maxCell) maxCell = c.size;
     }
     if (!n || sm === 0) return null;
-    return { x: sx / sm, y: sy / sm, size: Math.sqrt(sm), mass: sm / 100, cellCount: n };
+    // size = ukupni radijus, maxCell = najveci pojedinacni blob (za izbor kralja:
+    // ceo bot > fragmentisan bot iste ukupne mase).
+    return { x: sx / sm, y: sy / sm, size: Math.sqrt(sm), mass: sm / 100, cellCount: n, maxCell };
   }
 
   function getState() {
@@ -364,7 +370,7 @@
 
   function command(cmd) {
     if (!cmd) return;
-    if (cmd.dir) move(cmd.dir[0], cmd.dir[1]);
+    if (cmd.dir) move(cmd.dir[0], cmd.dir[1], cmd.speed);
     if (cmd.feed) { for (let i = 0; i < (cmd.feed | 0 || 1); i++) feed(); }
     if (cmd.split) split();
     if (cmd.respawn) respawn();

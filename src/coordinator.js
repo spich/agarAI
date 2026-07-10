@@ -51,6 +51,7 @@ export async function runCoordinator(fleet, cfg, log) {
   let running = true;
   let protocolWarned = false;
   let diagDone = false;
+  let prevKing = null;
   const stop = () => { running = false; };
 
   while (running) {
@@ -79,9 +80,10 @@ export async function runCoordinator(fleet, cfg, log) {
       }
     }
 
-    // 2) Spoji svet i izaberi kralja.
+    // 2) Spoji svet i izaberi kralja (uz histerezu preko prethodnog).
     const world = mergeWorld(states);
-    const kingIndex = pickKing(cfg, world.teamCenters);
+    const kingIndex = pickKing(cfg, world.teamCenters, prevKing);
+    prevKing = kingIndex;
     const kingCenter = world.teamCenters[kingIndex] || null;
     const ctx = { cfg, kingIndex, teamCenters: world.teamCenters };
 
