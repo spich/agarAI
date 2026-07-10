@@ -51,13 +51,14 @@ export function buildConfig() {
     // Ko je kralj: 'auto' (najveci) ili indeks 0..n-1.
     king: A.king === undefined ? 'auto' : (A.king === 'auto' ? 'auto' : num(A.king, 0)),
 
-    // Parametri strategije (u jedinicama sveta / velicine celije).
-    feedRange: num(A.feedRange, 900),      // koliko blizu kralju feeder mora da bude da bi hranio
-    feedAlign: num(A.feedAlign, 0.6),      // kosinusni prag poravnanja pre W (0..1)
+    // Parametri strategije. RELATIVNI su (u odnosu na velicinu celije), da
+    // bi radili na bilo kojoj skali klona (agar.rs koristi vece brojeve).
     threatRatio: num(A.threatRatio, 1.15), // protivnik veci od mene * ovo = pretnja
-    fleeRange: num(A.fleeRange, 700),      // radijus u kom bezimo od pretnje
     virusRatio: num(A.virusRatio, 1.0),    // izbegavaj virus ako sam veci od njega * ovo
-    minFeedSize: num(A.minFeedSize, 60),   // feeder ispod ove velicine ne hrani (prvo sam raste)
+    fleeFactor: num(A.fleeFactor, 4.5),    // beži ako je pretnja bliza od (moja+njegova velicina)*ovo
+    feedFactor: num(A.feedFactor, 9),      // spoljna granica zone hranjenja = kralj.velicina * ovo
+    safeFactor: num(A.safeFactor, 1.25),   // bezbedna distanca od kralja = kralj.velicina * ovo + margin
+    minFeedRatio: num(A.minFeedRatio, 0.2),// hranilac manji od kralja*ovo prvo raste, pa hrani
     ejectPerTick: num(A.eject, 2),         // koliko W impulsa po tiku kad hrani
 
     // Kontrola: 'input' (sinteticki mis/tastatura, najotpornije)
@@ -75,7 +76,12 @@ export function buildConfig() {
     capture: A.capture === true,
     captureDir: A.captureDir || 'captures',
     debug: A.debug === true,
+    // Dijagnostika: ispisi jednom razlozeno stanje sveta (velicine hrane,
+    // igraca, granice mape) da bi se pragovi fino nastelovali.
+    diag: A.diag === true,
   };
+  // Diag ispisuje tekst koji bi mapa obrisala -> ugasi mapu kad je diag.
+  if (cfg.diag) cfg.map = false;
   return cfg;
 }
 

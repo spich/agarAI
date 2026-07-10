@@ -19,11 +19,38 @@ function looksSane(st) {
   return good > 0.6;
 }
 
+// Jednokratni dijagnosticki ispis razlozenog stanja (za stelovanje pragova).
+function printDiag(states, log) {
+  for (let i = 0; i < states.length; i++) {
+    const st = states[i];
+    if (!st || !st.spawned || !st.me) continue;
+    const ents = st.entities;
+    const sizes = ents.map((e) => e.size).sort((a, b) => a - b);
+    const med = sizes.length ? sizes[Math.floor(sizes.length / 2)] : 0;
+    const food = ents.filter((e) => e.isFood).length;
+    const virus = ents.filter((e) => e.isVirus).length;
+    const eject = ents.filter((e) => e.isEjected).length;
+    const named = ents.filter((e) => e.name).length;
+    const small = ents.filter((e) => !e.isVirus && !e.name).slice(0, 5)
+      .map((e) => `${e.size}@(${Math.round(e.x)},${Math.round(e.y)})`);
+    log('===== DIAG (tab ' + i + ') =====');
+    log(`  mapBounds: ${JSON.stringify(st.mapBounds)}`);
+    log(`  me: size=${Math.round(st.me.size)} mass=${Math.round(st.me.mass)} @(${Math.round(st.me.x)},${Math.round(st.me.y)})`);
+    log(`  entities=${ents.length}  velicine[min/med/max]=${sizes[0]||0}/${med}/${sizes[sizes.length-1]||0}`);
+    log(`  flag-klasifikacija: isFood=${food} isVirus=${virus} isEjected=${eject} named=${named}`);
+    log(`  uzorak sitnih (size@xy): ${small.join('  ')}`);
+    log('=============================');
+    return true;
+  }
+  return false;
+}
+
 export async function runCoordinator(fleet, cfg, log) {
   const { bots } = fleet;
   let tick = 0;
   let running = true;
   let protocolWarned = false;
+  let diagDone = false;
   const stop = () => { running = false; };
 
   while (running) {
@@ -31,6 +58,11 @@ export async function runCoordinator(fleet, cfg, log) {
     // 1) Skupi stanje svih botova paralelno (kroz pravi frame, iframe-safe).
     const states = await Promise.all(bots.map((b) => botGetState(b)));
     states.forEach((st, i) => { bots[i].lastState = st; });
+
+    // Jednokratni --diag ispis.
+    if (cfg.diag && !diagDone) {
+      diagDone = printDiag(states, log);
+    }
 
     // Jednokratna dijagnostika protokola.
     if (!protocolWarned) {
