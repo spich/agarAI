@@ -3,10 +3,12 @@
 
 import { chromium } from 'playwright';
 import { fileURLToPath } from 'url';
+import fs from 'fs';
 import path from 'path';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const HOOK_PATH = path.join(__dirname, 'inject', 'agarhook.js');
+const HOOK_SRC = fs.readFileSync(HOOK_PATH, 'utf8');
 
 export async function launchFleet(cfg, log) {
   // Jedan browser, vise tabova = vise "igraca". User-data dir da svaki
@@ -24,17 +26,17 @@ export async function launchFleet(cfg, log) {
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36',
   });
 
-  // Opcije koje hook cita iz stranice.
-  await context.addInitScript({
-    content: `window.__AGARAI_OPT = ${JSON.stringify({
-      capture: cfg.capture,
-      moveRadius: cfg.moveRadius,
-      control: cfg.control,
-      debug: cfg.debug,
-    })};`,
+  // Opcije + hook u JEDNOM init skriptu (da OPT sigurno postoji pre hooka,
+  // i u svakom frame-u ukljucujuci iframe klona).
+  const opt = JSON.stringify({
+    capture: cfg.capture,
+    moveRadius: cfg.moveRadius,
+    control: cfg.control,
+    debug: cfg.debug,
   });
-  // Sam hook - ubacuje se pre ucitavanja svake stranice.
-  await context.addInitScript({ path: HOOK_PATH });
+  await context.addInitScript({
+    content: `window.__AGARAI_OPT = ${opt};\n${HOOK_SRC}`,
+  });
 
   const bots = [];
   for (let i = 0; i < cfg.count; i++) {
@@ -131,10 +133,16 @@ export async function botCommand(bot, cmd) {
   return f.evaluate((c) => window.__AGARAI && window.__AGARAI.command(c), cmd).catch(() => {});
 }
 
-// Izvuci snimljene frejmove (iz frame-a sa socketom).
+// Izvuci snimljene frejmove iz SVIH frame-ova (socket moze biti u iframe-u).
 export async function botDumpCaptures(bot) {
-  const f = await pickFrame(bot);
-  return f.evaluate(() => window.__AGARAI && window.__AGARAI._dumpCaptures()).catch(() => []);
+  const out = [];
+  for (const f of bot.page.frames()) {
+    const caps = await f.evaluate(
+      () => (window.__AGARAI && window.__AGARAI._dumpCaptures) ? window.__AGARAI._dumpCaptures() : null
+    ).catch(() => null);
+    if (caps && caps.length) out.push(...caps);
+  }
+  return out;
 }
 
 // Ceka da bot dobije svoju celiju (spawned) do timeout-a.
