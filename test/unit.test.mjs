@@ -157,7 +157,7 @@ test('strategija: bezi tek od >=2x MASE; 1.5x mase samo blago zaobilazi', () => 
   assert.ok(a.dir[0] < 0.99, 'treba da skrene od 1.5x protivnika');
   // 2.6x mase (size 323): bezi
   const b = decide({ index: 0 }, st(me, [{ id: 2, x: 400, y: 0, size: 323, name: 'BIG' }]), ctx({ teamCenters: [me, null, null] }));
-  assert.equal(b.note, 'bezim od pretnje');
+  assert.ok(/bezim|BEG split/.test(b.note), b.note);
   assert.ok(b.dir[0] < 0);
 });
 
@@ -194,7 +194,7 @@ test('strategija: tudji igrac sa imenom se NE maskira kao saigrac', () => {
   const me = meAt(300, 0, 100);
   const d = decide({ index: 1 }, st(me, [{ id: 9, x: 450, y: 0, size: 260, name: 'ENEMY' }]),
     ctx({ teamCenters: [king, me, null] }));
-  assert.equal(d.note, 'bezim od pretnje');
+  assert.ok(/bezim|BEG split/.test(d.note), d.note);
 });
 
 test('ping-pong: mali naspram velikog kralja daje SVE (ostatak ne bi mogao da primi nazad)', () => {
@@ -313,7 +313,7 @@ test('strategija: flee-latch drzi bekstvo kratko posle nestanka pretnje', () => 
   const me = meAt(0, 0, 100);
   const bot = { index: 1 };
   const T = [{ id: 2, x: 300, y: 0, size: 300, name: 'BIG' }];
-  assert.equal(decide(bot, st(me, T), ctx({ teamCenters: [king, me, null], now: 1000 })).note, 'bezim od pretnje');
+  assert.ok(/bezim od pretnje|BEG split/.test(decide(bot, st(me, T), ctx({ teamCenters: [king, me, null], now: 1000 })).note));
   assert.equal(decide(bot, st(me, []), ctx({ teamCenters: [king, me, null], now: 1200 })).note, 'bezim (inercija)');
   assert.notEqual(decide(bot, st(me, []), ctx({ teamCenters: [king, me, null], now: 1600 })).note, 'bezim (inercija)');
 });
@@ -382,4 +382,36 @@ test('faze: dok je tim mali - daj sve; kad kralj naraste - ping-pong sa ostatkom
   decide(b2, st(me2, []), ctx({ teamCenters: [big, me2, null] }));
   assert.equal(b2._giving, true);
   assert.ok(b2._keep >= 60, `faza 2: zadrzi ostatak za krupnu hranu, keep=${b2._keep}`);
+});
+
+const SM = { ...CFG, escapeSplit: true, travelSplit: true };
+test('split za kretanje (--escapeSplit): beg splitom kad je pretnja na korak, ali ne u virus', () => {
+  const me = meAt(0, 0, 150);
+  const T = [{ id: 2, x: 420, y: 0, size: 300, name: 'BIG' }];      // razmak ivica 420-300-150 = -30
+  const bot = { index: 0 };
+  const d = decide(bot, st(me, T), ctx({ cfg: SM, teamCenters: [me, null, null] }));
+  assert.equal(d.note, 'BEG split');
+  assert.equal(d.split, true);
+  assert.ok(d.dir[0] < -0.99, 'split u smeru bekstva');
+  // virus na putu bekstva, a moj deo posle splita bi na njemu pukao -> bez skoka
+  const big = meAt(0, 0, 250);                                    // deo ~177 > virus*1.15
+  const T2 = [{ id: 2, x: 600, y: 0, size: 450, name: 'BIG' }];
+  const d2 = decide({ index: 0 }, st(big, [...T2, { id: 9, x: -400, y: 0, size: 100, isVirus: true }]), ctx({ cfg: SM, teamCenters: [big, null, null] }));
+  assert.ok(!d2.split, d2.note);
+  // bez virusa isti bot skace
+  assert.equal(decide({ index: 0 }, st(big, T2), ctx({ cfg: SM, teamCenters: [big, null, null] })).note, 'BEG split');
+  // pretnja jos daleko -> samo bezi, bez splita
+  const d3 = decide({ index: 0 }, st(me, [{ id: 2, x: 800, y: 0, size: 300, name: 'BIG' }]), ctx({ cfg: SM, teamCenters: [me, null, null] }));
+  assert.equal(d3.note, 'bezim od pretnje');
+});
+
+test('split za kretanje (--travelSplit): davalac daleko od primaoca split-uje ka njemu (brze stize)', () => {
+  const king = meAt(0, 0, 300);
+  const me = meAt(3000, 0, 100);                               // daleko, daje sve
+  const d = decide({ index: 1 }, st(me, []), ctx({ cfg: SM, teamCenters: [king, me, null] }));
+  assert.equal(d.note, 'BRZO ka kralju (split)');
+  assert.ok(d.dir[0] < -0.99);
+  // pretnja u blizini -> bez travel splita (razbijen bi bio lak plen)
+  const d2 = decide({ index: 1 }, st(me, [{ id: 3, x: 3000, y: 900, size: 200, name: 'X' }]), ctx({ cfg: SM, teamCenters: [king, me, null] }));
+  assert.notEqual(d2.note, 'BRZO ka kralju (split)');
 });

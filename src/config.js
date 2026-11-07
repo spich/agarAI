@@ -108,6 +108,17 @@ export function buildConfig() {
     huntNeedPartner: A.huntNeedPartner !== false, // (--pingpong) kralj split-uje samo kad je partner pored
     partnerRange: num(A.partnerRange, 1600),
     stayRange: num(A.stayRange, 900),      // dok skuplja, drzi se ovoliko blizu primaoca
+    // SPLIT ZA KRETANJE: split daje trzaj napred, a manji delovi su brzi
+    escapeSplit: A.escapeSplit === true,   // beg splitom kad je pretnja na korak (--escapeSplit; sim: nestabilno)
+    escapeGap: num(A.escapeGap, 0.8),      // "na korak" = razmak ivica < mySz*ovo + 40
+    escapeMaxCells: num(A.escapeMaxCells, 4),
+    escapeSplitCdMs: num(A.escapeSplitCd, 700),
+    travelSplit: A.travelSplit === true,   // davalac split-uje ka primaocu da stigne brze (--travelSplit; sim: skodi)
+    travelSplitMin: num(A.travelSplitMin, 1200), // samo kad je primalac dalje od ovoga
+    travelMaxCells: num(A.travelMaxCells, 4),
+    travelSplitCdMs: num(A.travelSplitCd, 600),
+    travelSafe: num(A.travelSafe, 900),    // nema pretnji blize od ovoga
+    splitFly: num(A.splitFly, 650),        // koliko daleko leti split (provera puta)
     virusPop: A.virusPop !== false,        // davalac se namerno razbije o virus blizu primaoca (--no-virusPop)
     popNearRecv: num(A.popNearRecv, 700),  // virus mora biti ovoliko blizu primaoca
     popRange: num(A.popRange, 1500),       // ... i ovoliko blizu mene
@@ -170,6 +181,8 @@ Najkorisnije opcije:
   --pingpong / --no-pingpong   Forsiraj ping-pong (zadrzi ostatak) / uvek daj sve; default auto:
                        prvo 'daj sve' dok kralj ne dobije --pingPongAt mase, onda ping-pong
   --no-virusPop        Ne koristi virus za brzo razbijanje pri davanju
+  --escapeSplit        Beg splitom kad je pretnja na korak (iskljuceno po defaultu)
+  --travelSplit        Brze kretanje splitom ka primaocu (iskljuceno po defaultu)
   --control input|protocol   Nacin slanja komandi (default protocol uz --brain page)
   --capture            Snimi sirove WebSocket frejmove u captures/ (za analizu protokola)
   --debug              Vise logova

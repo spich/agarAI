@@ -106,12 +106,13 @@ function avoidVector(me, s, cfg) {
   };
   const mySz = me.maxCell || me.size;
   const myMass = mySz * mySz;
+  let gap = Infinity;              // razmak ivica do najblize split-pretnje (za beg splitom)
   for (const t of s.threats) {
     const d = dist(me, t);
     if (t.size * t.size >= myMass * cfg.threatRatio) {
       const r = Math.max((mySz + t.size) * cfg.fleeFactor, mySz + t.size + (cfg.splitReach || 0));
       const band = cfg.threatBand || 1.3;
-      if (d < r) { v = add(v, scale(norm(sub(me, t)), (r - d) / r)); threat = true; }
+      if (d < r) { v = add(v, scale(norm(sub(me, t)), (r - d) / r)); threat = true; gap = Math.min(gap, d - t.size - mySz); }
       if (d < r * (cfg.fleeExit || 1.15)) { near = true; nearVec = add(nearVec, norm(sub(me, t))); }
       if (d >= r && d < r * band) addSoft(t, (r * band - d) / (r * (band - 1)));
     } else {
@@ -129,7 +130,24 @@ function avoidVector(me, s, cfg) {
       }
     }
   }
-  return { v, threat, near, nearVec, soft };
+  return { v, threat, near, nearVec, soft, gap };
+}
+
+// Da li je put u pravcu dir slobodan za split-skok (nema virusa koji bi me
+// razbio ni pretnje u koju bih uleteo) na duzini leta splita.
+function clearAhead(me, dir, s, mySz, cfg) {
+  const L = cfg.splitFly || 650;
+  const piece = mySz * 0.71;                       // posle splita moj deo je ~size/sqrt(2)
+  const blocks = (o, pad) => {
+    const rx = o.x - me.x, ry = o.y - me.y;
+    const along = rx * dir[0] + ry * dir[1];
+    if (along < 0 || along > L + o.size) return false;
+    const perp = Math.abs(rx * dir[1] - ry * dir[0]);
+    return perp < o.size + pad;
+  };
+  for (const g of s.viruses) if (piece > g.size * 1.15 && blocks(g, piece)) return false;
+  for (const t of s.threats) if (blocks(t, piece)) return false;
+  return true;
 }
 
 // Hrana: u dometu, prednost onoj ISPRED (kazna za okretanje), histereza.
@@ -284,6 +302,17 @@ function decideCore(bot, state, ctx) {
   bot._soft = avoid.soft;
   if (avoid.threat) { bot._fleeUntil = now + cfg.fleeLatchMs; bot._fleeVec = avoid.v; bot._fleeing = true; }
   const stillNear = bot._fleeing && avoid.near;
+  // BEG SPLITOM: pretnja je vec na korak - normalnim kretanjem ne bih stigao.
+  // Split u smeru bekstva izbaci deo van domasaja (a manji delovi su brzi).
+  if (avoid.threat && cfg.escapeSplit !== false) {
+    const fd = norm(avoid.v);
+    const imminent = avoid.gap < mySz * (cfg.escapeGap || 0.8) + 40;
+    if (imminent && mySz >= cfg.minSplitSize && (me.cellCount || 1) < (cfg.escapeMaxCells || 4) &&
+        now >= (bot._splitUntil || 0) && clearAhead(me, fd, s, mySz, cfg)) {
+      bot._splitUntil = now + (cfg.escapeSplitCdMs || 700);
+      return { aim: { x: me.x + fd[0] * 1000, y: me.y + fd[1] * 1000 }, dir: fd, split: true, _flee: true, note: 'BEG split' };
+    }
+  }
   if (avoid.threat || stillNear || (bot._fleeUntil && now < bot._fleeUntil)) {
     const v = avoid.threat ? avoid.v : (stillNear ? avoid.nearVec : (bot._fleeVec || [1, 0]));
     return { dir: norm(v), speed: 1, feed: 0, _flee: true, note: avoid.threat ? 'bezim od pretnje' : 'bezim (inercija)' };
@@ -439,6 +468,16 @@ function decideCore(bot, state, ctx) {
           if (dg + dr < vs) { vs = dg + dr; vb = g; }
         }
         if (vb) return { aim: { x: vb.x, y: vb.y }, dir: norm(sub(vb, me)), _noAvoid: true, note: 'DAJEM: razbijam se o virus' };
+      }
+      // BRZO KA PRIMAOCU SPLITOM: daleko sam, a ionako idem u njega - split
+      // ka njemu daje trzaj napred, a manji delovi su brzi. Samo kad je put
+      // bezbedan (nema pretnji u blizini, virusa ni pretnji na putanji).
+      if (cfg.travelSplit !== false && dKing > (cfg.travelSplitMin || 1200) &&
+          cells < (cfg.travelMaxCells || 4) && mySz >= cfg.minSplitSize && now >= (bot._splitUntil || 0) &&
+          !s.threats.some((t) => dist(me, t) < (cfg.travelSafe || 900) + t.size) &&
+          clearAhead(me, dirKing, s, mySz, cfg)) {
+        bot._splitUntil = now + (cfg.travelSplitCdMs || 600);
+        return { aim: aimKing, dir: dirKing, split: true, note: 'BRZO ka kralju (split)' };
       }
       // delovi moraju biti dovoljno mali da ih primalac proguta, i ne veci od
       // ostatka koji zadrzavam -> split-uj jos dok to ne vazi

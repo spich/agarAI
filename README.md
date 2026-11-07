@@ -115,6 +115,8 @@ Pragovi pretnje su **po masi** (kao u igri), ne po veličini.
 | `--keepMass` | 60 | Ping-pong: ostatak bar ovoliki (da jede krupnu hranu) |
 | `--recvMinFrac` | 0.1 | Ceo saigrač prima razbijenog ako ima bar ovaj deo njegove mase |
 | `--no-virusPop` | uključen | Ne koristi virus za brzo razbijanje pri davanju |
+| `--escapeSplit` | isključen | Beg splitom kad je pretnja na korak (sim: veći raspon, više smrti) |
+| `--travelSplit` | isključen | Davalac split-uje ka primaocu da stigne brže (sim: lošije) |
 | `--feedmode` | kamikaze | `kamikaze` = split/uleti; `mixed` = + W; `eject` = samo W sa distance |
 | `--huntRange` / `--no-huntSplit` | 8 / uključen | Domet lova kralja (`veličina×ovo+300`) / split-kill |
 | `--splitKillDist` / `--maxHuntCells` | 420 / 2 | Domet mog splita / ne split-uj ako sam već u više delova |
