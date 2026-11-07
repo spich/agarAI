@@ -3,7 +3,7 @@
 
 import { decide, pickKing } from './strategy.js';
 import { mergeWorld, renderMap, drawScreen } from './map.js';
-import { sleep, botGetState, botCommand, botRejoin } from './browser.js';
+import { sleep, botGetState, botCommand, botRejoin, botStatus } from './browser.js';
 
 // Heuristika: da li dekodirano stanje izgleda ispravno (pozicije unutar
 // granica mape). Ako ne, protokol agar.rs verovatno odstupa od dekodera.
@@ -45,7 +45,50 @@ function printDiag(states, log) {
   return false;
 }
 
+// --brain page (default): mozak je u stranicama; Node samo nadgleda,
+// crta mapu/status i, ako respawn iz stranice ne uspe, klikne Play.
+async function runMonitor(fleet, cfg, log) {
+  const { bots } = fleet;
+  let tick = 0;
+  for (;;) {
+    tick++;
+    const now = Date.now();
+    const sts = await Promise.all(bots.map((b) => botStatus(b)));
+    sts.forEach((s, i) => {
+      const b = bots[i];
+      if (s && s.spawned) { b._deadSince = 0; return; }
+      if (!b._deadSince) b._deadSince = now;
+      // stranica sama salje nick posle smrti; ako posle 5s i dalje nismo u
+      // igri (npr. klon trazi klik u meniju), klikni Play kao rezervu
+      if (now - b._deadSince > 5000 && (!b._lastRejoin || now - b._lastRejoin > 4000)) {
+        b._lastRejoin = now;
+        botRejoin(b, cfg).catch(() => {});
+      }
+    });
+    const line = sts.map((s, i) => {
+      const nick = bots[i].nick;
+      if (!s) return `${nick}: (nema statusa)`;
+      const crown = s.king === i ? '@' : '';
+      return `${crown}${nick}: ${s.spawned ? `${s.mass} (${s.cells}d)` : 'mrtav'} [${s.note}] ${s.dps}/s tim=${s.teamSeen}`;
+    }).join('  |  ');
+    if (cfg.map && tick % 2 === 0) {
+      const states = await Promise.all(bots.map((b) => botGetState(b)));
+      const world = mergeWorld(states);
+      const k = (sts.find((s) => s && s.spawned) || {}).king ?? 0;
+      drawScreen(renderMap(world, cfg, { kingIndex: k, kingCenter: world.teamCenters[k] || null, tick, notes: line }));
+    } else if (!cfg.map && tick % 4 === 0) {
+      log(line);
+    }
+    // za simulator/dijagnostiku: masinski citljiv status
+    if (cfg.jitterLog && tick % 4 === 0) {
+      sts.forEach((s, i) => { if (s) log(`STAT ${bots[i].nick} ${JSON.stringify({ note: s.note, flips: s.flips, rapid: s.rapidFlips, causes: s.flipCauses, dps: s.dps })}`); });
+    }
+    await sleep(cfg.statusMs || 500);
+  }
+}
+
 export async function runCoordinator(fleet, cfg, log) {
+  if (cfg.brain === 'page' && cfg.team) return runMonitor(fleet, cfg, log);
   const { bots } = fleet;
   let tick = 0;
   let running = true;

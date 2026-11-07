@@ -72,7 +72,7 @@ export async function startServer(opts = {}) {
       stats: {
         spawns: 0, deaths: 0, deathsByTeam: 0, deathsByEnemy: 0, maxMass: 0, massSamples: [],
         splitCmds: 0, doubleSplits: 0, ejects: 0, virusPops: 0, foodEaten: 0,
-        massFromTeam: 0, massToTeam: 0, enemyKills: 0, moveMsgs: 0, dirFlips: 0, aliveMs: 0,
+        massFromTeam: 0, massToTeam: 0, enemyKills: 0, enemyMassEaten: 0, moveMsgs: 0, dirFlips: 0, aliveMs: 0,
         bigEnemyNearMs: 0, minDistBigEnemy: Infinity,
       },
       _lastSplitAt: 0, _lastDir: null, _splitCd: 0, _wander: null, _wanderUntil: 0, _respawnAt: 0,
@@ -262,6 +262,7 @@ export async function startServer(opts = {}) {
             const bo = b.owner;
             bo.cells.delete(b.id);
             if (bo.isTeam && ao.isTeam) { ao.stats.massFromTeam += b.mass; bo.stats.massToTeam += b.mass; }
+            if (ao.isTeam && !bo.isTeam) ao.stats.enemyMassEaten += b.mass;
             if (!bo.cells.size) {
               bo.stats.deaths++;
               if (bo.isTeam && ao.isTeam) bo.stats.deathsByTeam++;
@@ -346,14 +347,19 @@ export async function startServer(opts = {}) {
       const x = buf.readDoubleLE(1), y = buf.readDoubleLE(9);
       o.mouse = { x, y };
       o.stats.moveMsgs++;
-      // jitter: koliko puta se pravac kretanja okrene za > 100 stepeni
+      // jitter: smer kretanja sada vs pre ~300ms; okret > 100 st. = dogadjaj
       const c = centerOf(o);
       if (c) {
         const dx = x - c.x, dy = y - c.y, L = Math.hypot(dx, dy);
         if (L > 40) {
-          const dir = [dx / L, dy / L];
-          if (o._lastDir && dir[0] * o._lastDir[0] + dir[1] * o._lastDir[1] < Math.cos(100 * Math.PI / 180)) o.stats.dirFlips++;
-          o._lastDir = dir;
+          const t = now(), dir = [dx / L, dy / L];
+          o._dh = o._dh || [];
+          o._dh.push({ t, dir });
+          while (o._dh.length && t - o._dh[0].t > 300) {
+            const old = o._dh.shift();
+            if (t - (o._lastFlip || 0) < 300) continue;
+            if (dir[0] * old.dir[0] + dir[1] * old.dir[1] < -0.17) { o.stats.dirFlips++; o._lastFlip = t; o._dh.length = 0; break; }
+          }
         }
       }
     } else if (op === 17) {

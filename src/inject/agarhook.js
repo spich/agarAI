@@ -7,13 +7,17 @@
 //   window.__AGARAI = {
 //     ready,                     // hook postavljen
 //     getState(): {...},         // zivo stanje sveta iz ugla ovog taba
-//     command(cmd),              // primeni komandu iz koordinatora
-//     split(), feed(), respawn(),
+//     status(): {...},           // kratak status mozga (za Node monitor)
+//     command(cmd),              // primeni komandu (stari --brain node rezim)
+//     split(), feed(), respawn(), pause(bool),
 //     _captures                  // sirovi frejmovi ako je capture ukljucen
 //   }
 //
-// Ovo je "klijent simulator": citamo svet iz dolaznih paketa, a komande
-// (kretanje/split/feed) saljemo kao sinteticke input evente ili kao pakete.
+// MOZAK U STRANICI (--brain page, default): na svaki paket od servera
+// pokrene strategiju (window.__AGARAI_STRAT, isti kod kao src/strategy.js)
+// i komande salje DIREKTNO u socket (agar.rs protokol). Tabovi tima dele
+// pozicije preko BroadcastChannel-a. Node samo pokrene, prati i po potrebi
+// klikne Play.
 // =====================================================================
 
 (function () {
@@ -25,6 +29,11 @@
   const SNIFF = !!OPT.sniff;                 // ispisuj hex paketa u konzolu uzivo
   const MOVE_RADIUS = OPT.moveRadius || 320;
   const CONTROL = OPT.control || 'input';
+  const STRAT = window.__AGARAI_STRAT || null;
+  const BRAIN = !!OPT.brain && !!STRAT;      // mozak radi u ovoj stranici
+  const IDX = OPT.index | 0;
+  const NICKS = OPT.nicks || [];
+  const BCFG = OPT.cfg || {};
 
   // Sniffer: ispisi prvih par paketa svakog opcode-a direktno u konzolu
   // (Playwright to prosledi u terminal). Najpouzdaniji nacin da vidimo bajtove.
@@ -120,7 +129,15 @@
         const name = rr.s;
 
         let cell = cells.get(id);
-        if (!cell) { cell = { id }; cells.set(id, cell); }
+        if (!cell) { cell = { id, vx: 0, vy: 0 }; cells.set(id, cell); }
+        else if (cell.t) {
+          // brzina (jedinica/ms), uglacana - za predvidjanje kretanja plena
+          const dt = now - cell.t;
+          if (dt > 5 && dt < 500) {
+            cell.vx = cell.vx * 0.5 + ((x - cell.x) / dt) * 0.5;
+            cell.vy = cell.vy * 0.5 + ((y - cell.y) / dt) * 0.5;
+          }
+        }
         cell.x = x; cell.y = y; cell.size = size;
         cell.r = r; cell.g = g; cell.b = b; cell.flags = flags;
         cell.name = name;
@@ -180,7 +197,7 @@
     if (view.byteLength < 1) return;
     const op = view.getUint8(0);
     switch (op) {
-      case 16: decodeUpdate(view); break;
+      case 16: decodeUpdate(view); brainStep(); break;
       case 18: cells.clear(); ownedIds.clear(); break;   // ClearAll (respawn) - bez duhova
       case 20: ownedIds.clear(); break;                  // ClearOwned
       case 32: decodeAddOwned(view); break;
@@ -211,15 +228,18 @@
       if (OPT.debug) console.log('[agarai] WS open', url);
       if (SNIFF) { try { console.log('AGARAI URL ' + String(url)); } catch (_) {} }
     });
-    if (CAPTURE || SNIFF) {
-      if (CAPTURE) captures.push({ t: Date.now(), dir: 'url', url: String(url) });
-      const origSend = ws.send.bind(ws);
-      ws.send = function (d) {
-        try {
-          let b = d;
-          if (!(b instanceof ArrayBuffer) && b && b.buffer) b = b.buffer;
-          if (b instanceof ArrayBuffer) {
-            const a = new Uint8Array(b);
+    if (CAPTURE) captures.push({ t: Date.now(), dir: 'url', url: String(url) });
+    // Omotac oko send-a: (1) dok mozak vozi, klijentov SOPSTVENI mis (op16)
+    // se odbacuje - inace bi se nas i njegov cilj svadjali; (2) capture/sniff.
+    const origSend = ws.send.bind(ws);
+    ws.send = function (d) {
+      try {
+        let a = null;
+        if (d instanceof ArrayBuffer) a = new Uint8Array(d);
+        else if (d && d.buffer instanceof ArrayBuffer) a = new Uint8Array(d.buffer, d.byteOffset || 0, d.byteLength);
+        if (a && a.length) {
+          if (!ourSend && a[0] === 16 && brainDriving()) return;   // klijentov mis - mi vozimo
+          if (CAPTURE || SNIFF) {
             const hex = bytesToHex(a.slice(0, 128));
             if (CAPTURE) {
               captures.push({ t: Date.now(), dir: 'out', op: a[0], len: a.length, hex });
@@ -227,10 +247,10 @@
             }
             sniff('OUT', a[0], a.length, hex);
           }
-        } catch (_) {}
-        return origSend(d);
-      };
-    }
+        }
+      } catch (_) {}
+      return origSend(d);
+    };
     return ws;
   }
   HookedWS.prototype = NativeWS.prototype;
@@ -275,13 +295,29 @@
     v.setFloat64(1, wx, true);
     v.setFloat64(9, wy, true);
     v.setUint32(17, 0, true);
-    try { socket.send(b); } catch (_) {}
+    rawSend(b);
   }
   function sendOp(op) {
     if (!socket || socket.readyState !== 1) return;
     const b = new ArrayBuffer(1);
     new DataView(b).setUint8(0, op);
+    rawSend(b);
+  }
+  // nasi paketi prolaze kroz filter (ourSend) - klijentov mis ne
+  let ourSend = false;
+  function rawSend(b) {
+    ourSend = true;
     try { socket.send(b); } catch (_) {}
+    ourSend = false;
+  }
+  // respawn bez UI-ja: isti paket koji klijent salje na Play (op0 + UTF16 nick)
+  function sendNick(nick) {
+    if (!socket || socket.readyState !== 1) return;
+    const b = new ArrayBuffer(1 + nick.length * 2);
+    const v = new DataView(b);
+    v.setUint8(0, 0);
+    for (let i = 0; i < nick.length; i++) v.setUint16(1 + i * 2, nick.charCodeAt(i), true);
+    rawSend(b);
   }
 
   // ---- javne akcije ----
@@ -318,19 +354,26 @@
   }
 
   // -------------------------- citanje stanja ----------------------------
+  let lastMaxId = null;
   function myCenter() {
-    let sx = 0, sy = 0, sm = 0, n = 0, maxCell = 0;
+    let sx = 0, sy = 0, sm = 0, n = 0, maxCell = 0, mx = 0, my = 0, maxId = null;
     for (const id of ownedIds) {
       const c = cells.get(id);
       if (!c) continue;
       const m = c.size * c.size;
       sx += c.x * m; sy += c.y * m; sm += m; n++;
-      if (c.size > maxCell) maxCell = c.size;
+      if (c.size > maxCell) { maxCell = c.size; mx = c.x; my = c.y; maxId = id; }
     }
     if (!n || sm === 0) return null;
+    // histereza: dve skoro jednake polovine posle split-a ne smeju da se
+    // smenjuju kao "najveci deo" svaki tik (hranioci bi skakali levo-desno)
+    const prevMax = lastMaxId != null ? cells.get(lastMaxId) : null;
+    if (prevMax && ownedIds.has(lastMaxId) && prevMax.size >= maxCell * 0.9) { mx = prevMax.x; my = prevMax.y; maxId = lastMaxId; }
+    lastMaxId = maxId;
     // size = ukupni radijus, maxCell = najveci pojedinacni blob (za izbor kralja:
-    // ceo bot > fragmentisan bot iste ukupne mase).
-    return { x: sx / sm, y: sy / sm, size: Math.sqrt(sm), mass: sm / 100, cellCount: n, maxCell };
+    // ceo bot > fragmentisan bot iste ukupne mase); mx,my = gde je taj blob
+    // (razbijen kralj: hranilac nisani u njega, ne u prazan centroid).
+    return { x: sx / sm, y: sy / sm, size: Math.sqrt(sm), mass: sm / 100, cellCount: n, maxCell, mx, my };
   }
 
   function getState() {
@@ -338,7 +381,7 @@
     const entities = [];
     for (const c of cells.values()) {
       entities.push({
-        id: c.id, x: c.x, y: c.y, size: c.size,
+        id: c.id, x: c.x, y: c.y, size: c.size, vx: c.vx || 0, vy: c.vy || 0,
         isVirus: c.isVirus, isFood: c.isFood, isEjected: c.isEjected,
         isMine: ownedIds.has(c.id), name: c.name || '',
       });
@@ -362,9 +405,162 @@
     if (cmd.respawn) respawn();
   }
 
+  // ========================== MOZAK U STRANICI ==========================
+  // Odlucuje na svaki update od servera (~25x/s). Nema Node-a u petlji.
+  const team = NICKS.map(() => null);            // poslednja poruka od svakog saigraca
+  let chan = null;
+  if (BRAIN && typeof BroadcastChannel !== 'undefined') {
+    try {
+      chan = new BroadcastChannel('agarai-team');
+      chan.onmessage = (e) => { const m = e.data; if (m && typeof m.i === 'number' && m.i !== IDX) team[m.i] = m; };
+    } catch (_) { chan = null; }
+  }
+  const bot = { index: IDX, nick: NICKS[IDX] || '' };
+  let paused = false, prevKing = null, kingIdx = null, lastBrain = 0, lastCast = 0;
+  let note = '-', steps = 0, firstStep = 0, deadSince = 0, lastNickSent = 0;
+  let flips = 0, rapidFlips = 0, lastFlipAt = 0, prevDir = null, prevNote = '';
+  const flipCauses = {};
+
+  function brainDriving() { return BRAIN && !paused && CONTROL === 'protocol' && ownedIds.size > 0; }
+
+  function teamCenters(me, nowMs) {
+    return NICKS.map((_, i) => {
+      if (i === IDX) return me;
+      const m = team[i];
+      if (!m || m.dead || nowMs - m.t > 1500) return null;
+      return { x: m.x, y: m.y, size: m.size, maxCell: m.maxCell, cellCount: m.cellCount, mass: m.mass, mx: m.mx, my: m.my };
+    });
+  }
+
+  function applyCmd(cmd, me) {
+    if (CONTROL !== 'protocol') {
+      // input rezim: pretvori aim u pravac pa kroz sinteticke dogadjaje
+      if (cmd.aim && me) cmd.dir = [cmd.aim.x - me.x, cmd.aim.y - me.y];
+      command(cmd);
+      return;
+    }
+    let tx = null, ty = null;
+    if (cmd.aim) { tx = cmd.aim.x; ty = cmd.aim.y; }
+    else if (cmd.dir) {
+      const s = typeof cmd.speed === 'number' ? Math.max(0.06, Math.min(1, cmd.speed)) : 1;
+      tx = me.x + cmd.dir[0] * 900 * s; ty = me.y + cmd.dir[1] * 900 * s;
+    }
+    if (tx !== null) sendMoveProtocol(tx, ty);      // mis PRE split/W da bi isli u pravu stranu
+    if (cmd.split) sendOp(17);
+    for (let i = 0; i < (cmd.feed | 0); i++) sendOp(21);
+  }
+
+  function brainStep() {
+    if (!BRAIN || paused) return;
+    const t = performance.now();
+    if (t - lastBrain < (BCFG.brainMs || 35)) return;
+    lastBrain = t;
+    if (!firstStep) firstStep = t;
+    const nowMs = Date.now();
+    const me = myCenter();
+    if (chan && t - lastCast > 60) {
+      lastCast = t;
+      try {
+        chan.postMessage(me ? { i: IDX, t: nowMs, x: me.x, y: me.y, size: me.size, maxCell: me.maxCell, cellCount: me.cellCount, mass: me.mass, mx: me.mx, my: me.my }
+          : { i: IDX, t: nowMs, dead: true });
+      } catch (_) {}
+    }
+    if (!me) {
+      // mrtav: posle kratke pauze posalji nick (= klik na Play), ponavljaj retko
+      if (!deadSince) deadSince = nowMs;
+      note = 'mrtav - respawn';
+      prevDir = null;
+      if (nowMs - deadSince > (BCFG.respawnDelayMs || 700) && nowMs - lastNickSent > 2000 && bot.nick) {
+        lastNickSent = nowMs;
+        sendNick(bot.nick);
+      }
+      return;
+    }
+    deadSince = 0;
+    const st = getState();
+    const centers = teamCenters(st.me, nowMs);
+    kingIdx = STRAT.pickKing(BCFG, centers, prevKing);
+    prevKing = kingIdx;
+    const cmd = STRAT.decide(bot, st, { cfg: BCFG, kingIndex: kingIdx, teamCenters: centers, teamNicks: NICKS, now: nowMs });
+    note = cmd.note || '-';
+    steps++;
+    // GLATKO UPRAVLJANJE: ogranici brzinu okretanja smera. Kolebanje cilja
+    // (plen vijuga, dve polovine kralja...) se tako izgubi, a namerni okret
+    // od 180 stepeni traje ~0.25s. Nisan za split/W se ne dira (mora tacno);
+    // bekstvo sme brze da okrene.
+    if (cmd.dir && !cmd.split && !cmd.feed) {
+      if (cmd.aim && st.me) cmd.dir = [cmd.aim.x - st.me.x, cmd.aim.y - st.me.y];
+      const maxDeg = cmd._flee ? (BCFG.fleeTurnDeg || 70) : (BCFG.maxTurnDeg || 30);
+      const sm = rotateToward(prevDir, cmd.dir, maxDeg);
+      if (sm !== cmd.dir) cmd.aim = null;
+      cmd.dir = sm;
+    }
+    if (cmd.dir) {
+      const l = Math.hypot(cmd.dir[0], cmd.dir[1]) || 1;
+      prevDir = [cmd.dir[0] / l, cmd.dir[1] / l];
+      trackFlips(prevDir, nowMs);
+    }
+    prevNote = note;
+    applyCmd(cmd, st.me);
+  }
+
+  // okreni smer a ka smeru b najvise za maxDeg stepeni
+  function rotateToward(a, b, maxDeg) {
+    if (!a) return b;
+    const aa = Math.atan2(a[1], a[0]);
+    const bb = Math.atan2(b[1], b[0]);
+    let d = bb - aa;
+    while (d > Math.PI) d -= 2 * Math.PI;
+    while (d < -Math.PI) d += 2 * Math.PI;
+    const m = maxDeg * Math.PI / 180;
+    if (Math.abs(d) <= m) return b;
+    const r = aa + Math.sign(d) * m;
+    return [Math.cos(r), Math.sin(r)];
+  }
+
+  // jitter statistika: smer sada vs pre ~300ms; okret > 100 stepeni je
+  // dogadjaj, a "brz" je ako dodje < 1.5s posle prethodnog (cimanje).
+  const dirHist = [];
+  function trackFlips(dir, nowMs) {
+    dirHist.push({ t: nowMs, d: dir, n: note });
+    while (dirHist.length && nowMs - dirHist[0].t > 300) {
+      const old = dirHist[0];
+      if (nowMs - old.t < 300) break;
+      dirHist.shift();
+      if (nowMs - lastFlipAt < 300) continue;
+      if (dir[0] * old.d[0] + dir[1] * old.d[1] < -0.17) {
+        flips++;
+        if (nowMs - lastFlipAt < 1500) {
+          rapidFlips++;
+          const k = old.n + ' -> ' + note;
+          flipCauses[k] = (flipCauses[k] || 0) + 1;
+        }
+        lastFlipAt = nowMs;
+        dirHist.length = 0;
+        break;
+      }
+    }
+  }
+  // rezerva ako server neko vreme ne salje update (npr. posle smrti)
+  if (BRAIN) setInterval(() => { if (performance.now() - lastBrain > 250) brainStep(); }, 250);
+
+  function status() {
+    const me = myCenter();
+    const secs = firstStep ? (performance.now() - firstStep) / 1000 : 0;
+    return {
+      brain: BRAIN, paused, note, king: kingIdx, index: IDX, spawned: !!me,
+      connected: !!socket,
+      mass: me ? Math.round(me.mass) : 0, cells: me ? me.cellCount : 0,
+      dps: secs > 1 ? Math.round(steps / secs) : 0,
+      flips, rapidFlips, flipCauses,
+      teamSeen: team.filter((m, i) => i !== IDX && m && Date.now() - m.t < 1500).length,
+    };
+  }
+
   Object.assign(window.__AGARAI, {
     ready: true,
-    getState, command, move, split, feed, respawn,
+    getState, command, move, split, feed, respawn, status,
+    pause: (p) => { paused = !!p; },
     _dumpCaptures: () => captures.slice(),
   });
 

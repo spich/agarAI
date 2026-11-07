@@ -10,7 +10,18 @@ mapu) spojenu iz svega što sva tri bota vide.
 > Namena: automatizacija igre / botovanje u agar klonu. Koristi na svoju
 > odgovornost i u skladu sa pravilima servera.
 
-## Kako radi
+## Kako radi (ukratko)
+
+Svaki tab ima **sopstveni mozak** (`src/strategy.js` ubačen u stranicu) koji
+odlučuje na svaki paket od servera (~25×/s) i šalje komande **direktno u
+socket** (agar.rs protokol). Tabovi tima dele pozicije preko
+`BroadcastChannel`-a. Node samo pokreće tabove, prikazuje status i po potrebi
+klikne Play. Rutine po prioritetu: **bekstvo** (≥2× mase) → **split-kill**
+(plen dovoljno mali, u dometu, sa predviđanjem kretanja) → **lov** → kralj
+**kupi masu / ide u susret hraniocu** → hranilac **se split-uje u kralja**
+(razbijen uleti ceo; `--feedmode mixed` dodaje i W) → hrana.
+
+## Kako radi (detaljno)
 
 ```
 ┌─ Node koordinator (tvoj komp) ─────────────────────────────┐
@@ -84,19 +95,24 @@ Pragovi pretnje su **po masi** (kao u igri), ne po veličini.
 
 | Opcija | Default | Šta radi |
 |---|---|---|
+| `--brain page\|node` | page | Mozak u tabu (brzo) ili stari Node režim |
+| `--feedmode` | kamikaze | `kamikaze` = split/uleti u kralja (merenje: najbolje); `mixed` = + W; `eject` |
+| `--huntRange` / `--no-huntSplit` | 8 / uključen | Domet lova kralja (`veličina×ovo+300`) / split-kill |
+| `--splitKillDist` / `--maxHuntCells` | 420 / 2 | Domet mog splita / ne split-uj ako sam već u više delova |
+| `--huntLock` / `--huntGiveUp` | 900 / 2500 | Drži započet lov / odustani ako se ne približavam (ms) |
+| `--ejectRange` | 650 | Hranilac pumpa W kad je kralj bliži od `(ja+kralj)+ovo` |
+| `--maxTurn` | 180 (isklj.) | Ograničenje okretanja po odluci (merenje: slabi lov) |
 | `--threatRatio` | 2.0 | Beži tek od protivnika sa ≥2× tvoje mase (može te split-ovati) |
-| `--eaterRatio` / `--eaterAvoid` | 1.3 / 1.4 | 1.3–2× mase: ne beži, samo ga zaobiđi |
-| `--splitReach` | 500 | Domet tuđeg splita — zona bekstva ga uvek pokriva |
-| `--fleeFactor` | 2.25 | Veličina zone bekstva `(ja+on)×ovo` |
-| `--threatBand` | 1.6 | Zona zaobilaženja oko pretnje (klizi oko nje, ne vraća se kroz nju) |
-| `--fleeExit` / `--fleeLatch` | 1.25 / 450 | Bekstvo traje dok pretnja nije dalje od zone×ovo / bar ovoliko ms |
+| `--eaterRatio` / `--eaterAvoid` | 1.3 / 1.1 | 1.3–2× mase: ne beži, samo ga zaobiđi |
+| `--splitReach` | 380 | Domet tuđeg splita — zona bekstva ga uvek pokriva |
+| `--fleeFactor` | 2.0 | Veličina zone bekstva `(ja+on)×ovo` |
+| `--threatBand` | 1.3 | Zona zaobilaženja oko pretnje (klizi oko nje, ne vraća se kroz nju) |
+| `--fleeExit` / `--fleeLatch` | 1.15 / 300 | Bekstvo traje dok pretnja nije dalje od zone×ovo / bar ovoliko ms |
 | `--virusAvoid` / `--virusPush` | 1.15 / 1.1 | Koliko blizu prolazi virusu / koliko jako skreće |
-| `--feedmode kamikaze\|eject` | kamikaze | Split u kralja (brzo) ili W sa distance |
-| `--kamiReach` / `--splitCd` | 1.7 / 1600 | Kad se split-uje u kralja / razmak između splitova |
+| `--kamiReach` / `--splitCd` | 1.7 / 1200 | Kad se split-uje u kralja / razmak između splitova |
 | `--meetRange` | 3500 | Kralj ide u susret spremnom hraniocu do ove daljine |
 | `--turnPenalty` | 1.5 | Prednost hrani ispred (manje okretanja); 0 = najbliža |
 | `--foodScope` | 10 | Gleda hranu samo do `veličina×ovo` |
-| `--kingSplit` | isključeno | Dozvoli kralju split-lov (inače masa ostaje na hrpi) |
 | `--jitterLog` | isključeno | Ispiši svaki nagli okret i koja ga odluka izaziva |
 
 Pun spisak: `node src/index.js --help`.

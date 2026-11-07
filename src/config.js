@@ -51,40 +51,60 @@ export function buildConfig() {
     // Ko je kralj: 'auto' (najveci) ili indeks 0..n-1.
     king: A.king === undefined ? 'auto' : (A.king === 'auto' ? 'auto' : num(A.king, 0)),
 
-    // Parametri strategije. RELATIVNI su (u odnosu na velicinu celije), da
-    // bi radili na bilo kojoj skali klona (agar.rs koristi vece brojeve).
-    threatRatio: num(A.threatRatio, 2.0),  // PO MASI: bezi tek od >=2x mase (moze split-lov)
-    threatBand: num(A.threatBand, 1.6),    // zona zaobilazenja pretnje = zona bekstva * ovo (anti petlja)
-    fleeExit: num(A.fleeExit, 1.25),       // bekstvo traje dok pretnja nije dalje od zone*ovo
-    splitReach: num(A.splitReach, 500),    // domet tudjeg splita: bezi bar (ja+on)+ovo od >=2x pretnje
-    eaterRatio: num(A.eaterRatio, 1.3),    // po masi: >1.3x moze da te pojede dodirom -> ne diraj ga
-    eaterAvoid: num(A.eaterAvoid, 1.4),    // blago odbijanje od takvih: (ja+on)*ovo
-    turnPenalty: num(A.turnPenalty, 1.5),  // prednost hrani ispred (anti-jitter); 0 = najbliza
-    meetRange: num(A.meetRange, 3500),     // kralj ide u susret spremnom hraniocu do ove daljine
+    // Gde radi mozak: 'page' (default) = u svakom tabu, na svaki paket od
+    // servera (~25x/s), komande direktno u socket; 'node' = stari rezim
+    // (Node odlucuje svakih --tick ms preko CDP-a - sporo).
+    brain: A.brain || 'page',
+    brainMs: num(A.brainMs, 35),           // najmanji razmak izmedju dve odluke u stranici
+    statusMs: num(A.statusMs, 500),        // koliko cesto Node cita status (samo prikaz)
+    respawnDelayMs: num(A.respawnDelay, 700),
+
+    // Parametri strategije - pragovi su PO MASI i relativni na velicinu.
+    // BEKSTVO
+    threatRatio: num(A.threatRatio, 2.0),  // bezi tek od >=2x mase (moze split-lov)
+    fleeFactor: num(A.fleeFactor, 2.0),    // zona bekstva (ja+on)*ovo ...
+    splitReach: num(A.splitReach, 380),    // ... ali bar (ja+on)+domet tudjeg splita
+    threatBand: num(A.threatBand, 1.3),    // zona zaobilazenja ispred zone bekstva
+    fleeExit: num(A.fleeExit, 1.15),       // bekstvo traje dok pretnja nije dalje od zone*ovo
+    fleeLatchMs: num(A.fleeLatch, 300),    // minimalno trajanje bekstva
+    eaterRatio: num(A.eaterRatio, 1.3),    // >1.3x mase moze da te pojede dodirom -> zaobidji
+    eaterAvoid: num(A.eaterAvoid, 1.1),
     virusRatio: num(A.virusRatio, 1.0),    // izbegavaj virus samo ako sam veci od njega * ovo
     virusAvoid: num(A.virusAvoid, 1.15),   // tesan radijus oko virusa = me.size*ovo (+ pola virusa)
-    virusPush: num(A.virusPush, 1.1),      // jacina blagog skretanja oko virusa (prolazi blizu)
-    fleeFactor: num(A.fleeFactor, 2.25),   // beži ako je pretnja bliza od (moja+njegova velicina)*ovo
-    feedFactor: num(A.feedFactor, 9),      // spoljna granica zone hranjenja = kralj.velicina * ovo
-    safeFactor: num(A.safeFactor, 1.25),   // bezbedna distanca od kralja = kralj.velicina * ovo + margin
-    minFeedRatio: num(A.minFeedRatio, 0.15),// hranilac manji od kralja*ovo prvo raste, pa hrani
-    ejectPerTick: num(A.eject, 2),         // koliko W impulsa po tiku (eject rezim)
-    // Nacin hranjenja: 'kamikaze' (split u kralja, brzo, pa restart) ili
-    // 'eject' (sporo izbacivanje mase sa bezbedne distance).
-    feedMode: A.feedmode || 'kamikaze',
-    minSplitSize: num(A.minSplitSize, 45), // ispod ove velicine hranilac ne split-uje (prvo raste)
-    kamiReach: num(A.kamiReach, 1.7),      // split kad je razmak < (kralj+ja velicine)*ovo
-    splitCooldownMs: num(A.splitCd, 1600), // razmak izmedju split-ova (da se ne izmnozi u 16 delova)
-    fleeLatchMs: num(A.fleeLatch, 450),    // koliko ostaje u bekstvu posle detekcije pretnje (anti-jitter)
-    kingSplit: A.kingSplit === true,       // da li kralj sme da se split-uje u lovu (default NE - masa na hrpi)
-    kingFeedback: A.kingFeedback !== false,// kralj dobaci malo mase sitnom suigracu (rotacija)
-    feedbackCdMs: num(A.feedbackCd, 350),  // razmak izmedju kraljevih dobacivanja (W)
-    foodScope: num(A.foodScope, 10),       // gledaj samo hranu blizu (me.size*ovo) - anti-jitter
+    virusPush: num(A.virusPush, 1.1),
+    // LOV
+    huntRange: num(A.huntRange, 8),        // kralj juri plen do mySz*ovo+300
+    feederHuntRange: num(A.feederHuntRange, 2.5), // hranioci jure plen samo ovako blizu
+    huntSplit: A.huntSplit !== false,      // split-kill ukljucen (--no-huntSplit iskljucuje)
+    splitKillDist: num(A.splitKillDist, 420), // domet mog splita od ivice
+    splitMinPrey: num(A.splitMinPrey, 0.25),  // ne split-uj za plen manji od mySz*ovo
+    maxHuntCells: num(A.maxHuntCells, 2),  // ne split-uj u lovu ako sam vec u vise od ovoliko delova
+    leadMs: num(A.leadMs, 200),            // predvidjanje kretanja plena
+    huntLockMs: num(A.huntLock, 900),      // zapocet lov traje bar ovoliko (anti-jitter)
+    huntGiveUpMs: num(A.huntGiveUp, 2500), // odustani od plena ako mu se ovoliko ne priblizavam
+    maxTurnDeg: num(A.maxTurn, 180),       // glatko upravljanje: max okret po odluci (180 = iskljuceno; merenje: ogranicenje slabi lov)
+    fleeTurnDeg: num(A.fleeTurn, 180),     // ... u bekstvu
+    // TIM / HRANJENJE
+    feedMode: A.feedmode || 'kamikaze',    // kamikaze = split/uleti u kralja (merenje: najbolje); mixed = + W; eject
+    ejectPerTick: num(A.eject, 1),         // W po odluci (odluka ~25x/s)
+    ejectRange: num(A.ejectRange, 650),    // pumpaj W kad je kralj blize od (ja+kralj)+ovo
+    minEjectSize: num(A.minEjectSize, 60), // ispod ove velicine ne moze W
+    minSplitSize: num(A.minSplitSize, 60), // ispod ove velicine ne moze split
+    kamiReach: num(A.kamiReach, 1.7),      // split u kralja kad je razmak < (kralj+ja)*ovo
+    splitCooldownMs: num(A.splitCd, 1200),
+    meetRange: num(A.meetRange, 3500),     // kralj ide u susret saigracu do ove daljine
+    kingFeedback: A.kingFeedback !== false,
+    feedbackCdMs: num(A.feedbackCd, 350),
+    safeFactor: num(A.safeFactor, 1.25),   // samo za --feedmode eject
+    minFeedRatio: num(A.minFeedRatio, 0.15),
+    // HRANA
+    turnPenalty: num(A.turnPenalty, 1.5),  // prednost hrani ispred (anti-jitter)
+    foodScope: num(A.foodScope, 10),
 
-    // Kontrola: 'input' (sinteticki mis/tastatura, najotpornije)
-    //           'protocol' (salji pakete direktno preko socketa)
-    control: A.control || 'input',
-    moveRadius: num(A.moveRadius, 320),    // koliko daleko od centra ekrana stavljamo mis (px)
+    // Kontrola: 'protocol' (paketi direktno u socket - default uz --brain page)
+    //           'input' (sinteticki mis/tastatura)
+    control: A.control || ((A.brain || 'page') === 'page' ? 'protocol' : 'input'),
+    moveRadius: num(A.moveRadius, 320),    // samo za 'input': udaljenost misa od centra (px)
 
     // Mapa okruzenja u terminalu.
     map: A.map !== false,
@@ -125,15 +145,19 @@ Najkorisnije opcije:
   --king auto|<idx>    Ko je dominantni bot (default auto = najveci)
   --no-team            Ne dodaji masu, samo posmatraj i crtaj mapu
   --map / --no-map     Uljuci/iskljuci ASCII mapu okruzenja (default ukljuceno)
-  --control input|protocol   Nacin slanja komandi (default input)
+  --brain page|node    Gde odlucuje bot: page (default) = u svakom tabu ~25x/s,
+                       komande direktno u socket; node = stari, spori rezim
+  --feedmode kamikaze|mixed|eject   Prebacivanje mase (default kamikaze: split/uleti u kralja)
+  --no-huntSplit       Iskljuci split-kill lov
+  --control input|protocol   Nacin slanja komandi (default protocol uz --brain page)
   --capture            Snimi sirove WebSocket frejmove u captures/ (za analizu protokola)
   --debug              Vise logova
-  --tick <ms>          Interval petlje odlucivanja (default 120)
+  --tick <ms>          Interval petlje u --brain node rezimu (default 120)
 
 Primeri:
   # Prvo proveri da li se okruzenje ispravno cita (bez teaminga):
   node src/index.js --no-team --capture
 
-  # Puni teaming, ti sam udjes u igru u sva 3 taba:
-  node src/index.js --manual-join
+  # Puni teaming (auto pristanak + Play, mozak u tabovima):
+  node src/index.js
 `;

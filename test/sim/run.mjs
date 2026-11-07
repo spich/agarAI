@@ -35,6 +35,7 @@ const args = [TOOL, '--url', server.url, '--headless', '--no-map', '--jitterLog'
 const jitter = {};                // "stara odluka -> nova odluka" -> broj naglih okreta
 const rapid = {};                 // isto, ali samo okreti koji brzo slede jedan drugi (petlja)
 let jitterAll = 0, rapidAll = 0;
+const lastStat = {};              // poslednji status mozga iz stranice po botu
 if (CHROME) args.push('--chrome', CHROME);
 const child = spawn(process.execPath, args, { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
 const toolLog = fs.createWriteStream(path.join(OUT, 'tool.log'));
@@ -43,6 +44,15 @@ child.stdout.on('data', (d) => {
   toolLog.write(d);
   for (const line of String(d).split('\n')) {
     if (/consent|auto-join|spawn:|UPOZORENJE|protokol OK|greska/i.test(line)) console.log('[alat]', line.replace(/^\[agarai\]\s*/, ''));
+    const stat = line.match(/STAT (\S+) (\{.*\})\s*$/);
+    if (stat) {
+      try {
+        const o = JSON.parse(stat[2]);
+        lastStat[stat[1]] = o;
+        notes[o.note] = (notes[o.note] || 0) + 1;
+      } catch (_) {}
+      continue;
+    }
     const j = line.match(/JITTER (\S+): (.*) \| dt=(\d+)$/);
     if (j) {
       jitter[j[2]] = (jitter[j[2]] || 0) + 1;
@@ -93,11 +103,11 @@ const bots = metrics.bots;
 const pad = (s, n) => String(s).padEnd(n);
 const num = (x) => (x === Infinity ? '-' : Math.round(x));
 console.log(`\n================ REZULTAT SIMULACIJE (${metrics.seconds}s) ================`);
-const cols = ['bot', 'spawn', 'smrti', 'od tima', 'od neprij.', 'max masa', 'kraj', 'split', 'DUPLI', 'eject', 'virus-pop', 'hrana', 'primio od tima', 'dao timu', 'jitter/min'];
+const cols = ['bot', 'spawn', 'smrti', 'od tima', 'od neprij.', 'max masa', 'kraj', 'split', 'DUPLI', 'eject', 'virus-pop', 'hrana', 'pojeo neprij.', 'primio od tima', 'dao timu', 'jitter/min'];
 console.log(cols.map((c, i) => pad(c, i === 0 ? 10 : Math.max(6, c.length + 1))).join(''));
 for (const b of bots) {
   const mins = Math.max(b.aliveMs / 60000, 1 / 60);
-  const row = [b.name, b.spawns, b.deaths, b.deathsByTeam, b.deathsByEnemy, Math.round(b.maxMass), b.mass, b.splitCmds, b.doubleSplits, b.ejects, b.virusPops, b.foodEaten, Math.round(b.massFromTeam), Math.round(b.massToTeam), (b.dirFlips / mins).toFixed(1)];
+  const row = [b.name, b.spawns, b.deaths, b.deathsByTeam, b.deathsByEnemy, Math.round(b.maxMass), b.mass, b.splitCmds, b.doubleSplits, b.ejects, b.virusPops, b.foodEaten, Math.round(b.enemyMassEaten), Math.round(b.massFromTeam), Math.round(b.massToTeam), (b.dirFlips / mins).toFixed(1)];
   console.log(row.map((c, i) => pad(c, i === 0 ? 10 : Math.max(6, cols[i].length + 1))).join(''));
 }
 const teamMax = Math.max(0, ...bots.map((b) => b.maxMass));
@@ -107,8 +117,16 @@ const splits = bots.reduce((a, b) => a + b.splitCmds, 0);
 const byEnemy = bots.reduce((a, b) => a + b.deathsByEnemy, 0);
 const pops = bots.reduce((a, b) => a + b.virusPops, 0);
 const food = bots.reduce((a, b) => a + b.foodEaten, 0);
+const enemyEaten = bots.reduce((a, b) => a + b.enemyMassEaten, 0);
+// mozak u stranici: brzi okreti i uzroci dolaze iz STAT linija
+for (const o of Object.values(lastStat)) {
+  rapidAll += o.rapid || 0; jitterAll += o.flips || 0;
+  for (const [k, v] of Object.entries(o.causes || {})) rapid[k] = (rapid[k] || 0) + v;
+}
+const dps = Object.entries(lastStat).map(([n, o]) => `${n}=${o.dps}/s`).join(' ');
 console.log(`\nprotivnici na kraju: ${metrics.enemies.map((e) => `${e.name}=${e.mass}`).join(' ')}`);
 console.log('najcesce akcije iz alata:', Object.entries(notes).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([k, v]) => `${k} x${v}`).join(', '));
+if (dps) console.log(`brzina odlucivanja (mozak u stranici): ${dps}`);
 console.log(`nagli okreti (>100 st.): ukupno ${jitterAll}, od toga BRZIH (<1.5s, petlja) ${rapidAll}`);
 console.log('  svi po uzroku:', Object.entries(jitter).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([k, v]) => `[${k}] x${v}`).join(', ') || 'nema');
 console.log('  brzi po uzroku:', Object.entries(rapid).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([k, v]) => `[${k}] x${v}`).join(', ') || 'nema');
@@ -116,6 +134,7 @@ console.log('  brzi po uzroku:', Object.entries(rapid).sort((a, b) => b[1] - a[1
 const checks = [
   ['svi botovi usli u igru (consent+Play+dekoder)', bots.length === 3 && bots.every((b) => b.spawns >= 1)],
   ['jedu hranu', food > 30],
+  [`jedu druge igrace (${Math.round(enemyEaten)} mase)`, enemyEaten > 0],
   ['nema duplih split-ova (1 komanda = 1 split)', splits === 0 || dbl === 0],
   ['masa se prenosi unutar tima (kamikaza/hranjenje)', transfer > 0],
   [`kralj narastao (max ${Math.round(teamMax)} > 3x start)`, teamMax > 120],

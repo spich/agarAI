@@ -9,14 +9,36 @@ import path from 'path';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const HOOK_PATH = path.join(__dirname, 'inject', 'agarhook.js');
 const HOOK_SRC = fs.readFileSync(HOOK_PATH, 'utf8');
+// Isti mozak (src/strategy.js) se ubacuje u stranicu: skinemo "export" i
+// izlozimo decide/pickKing kao window.__AGARAI_STRAT.
+const STRAT_SRC = '(function(){\n' +
+  fs.readFileSync(path.join(__dirname, 'strategy.js'), 'utf8').replace(/^export\s+/gm, '') +
+  '\nwindow.__AGARAI_STRAT = { decide: decide, pickKing: pickKing };\n})();\n';
+
+export function pageScript(cfg, index) {
+  const nicks = cfg.nicks.slice(0, cfg.count);
+  const opt = {
+    capture: cfg.capture,
+    sniff: cfg.sniff,
+    moveRadius: cfg.moveRadius,
+    control: cfg.control,
+    debug: cfg.debug,
+    brain: cfg.brain === 'page' && cfg.team,
+    index,
+    nicks,
+    cfg,                                    // sva podesavanja strategije
+  };
+  return `window.__AGARAI_OPT = ${JSON.stringify(opt)};\n${STRAT_SRC}\n${HOOK_SRC}`;
+}
 
 export async function launchFleet(cfg, log) {
-  // Jedan browser, vise tabova = vise "igraca". User-data dir da svaki
-  // tab moze da ostane ulogovan/podesen ako klon to trazi.
   const launchOpts = {
     headless: cfg.headless,
     slowMo: cfg.slowmo,
-    args: ['--disable-blink-features=AutomationControlled', '--mute-audio'],
+    // Tabovi u pozadini ne smeju da se uspore - svaki bot mora da radi punom brzinom.
+    args: ['--disable-blink-features=AutomationControlled', '--mute-audio',
+      '--disable-background-timer-throttling', '--disable-backgrounding-occluded-windows',
+      '--disable-renderer-backgrounding'],
   };
   if (cfg.chromePath) launchOpts.executablePath = cfg.chromePath;
   const browser = await chromium.launch(launchOpts);
@@ -26,22 +48,12 @@ export async function launchFleet(cfg, log) {
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36',
   });
 
-  // Opcije + hook u JEDNOM init skriptu (da OPT sigurno postoji pre hooka,
-  // i u svakom frame-u ukljucujuci iframe klona).
-  const opt = JSON.stringify({
-    capture: cfg.capture,
-    sniff: cfg.sniff,
-    moveRadius: cfg.moveRadius,
-    control: cfg.control,
-    debug: cfg.debug,
-  });
-  await context.addInitScript({
-    content: `window.__AGARAI_OPT = ${opt};\n${HOOK_SRC}`,
-  });
-
   const bots = [];
   for (let i = 0; i < cfg.count; i++) {
     const page = await context.newPage();
+    // Opcije (svoj indeks!) + mozak + hook u JEDNOM init skriptu, za svaki
+    // frame ovog taba (ukljucujuci iframe klona).
+    await page.addInitScript({ content: pageScript(cfg, i) });
     const nick = cfg.nicks[i] || `bot${i + 1}`;
     if (cfg.debug || cfg.sniff) {
       page.on('console', (m) => {
@@ -193,6 +205,12 @@ export async function botGetState(bot) {
 export async function botCommand(bot, cmd) {
   const f = await pickFrame(bot);
   return f.evaluate((c) => window.__AGARAI && window.__AGARAI.command(c), cmd).catch(() => {});
+}
+
+// Kratak status mozga iz stranice (jedan mali evaluate).
+export async function botStatus(bot) {
+  const f = await pickFrame(bot);
+  return f.evaluate(() => window.__AGARAI && window.__AGARAI.status && window.__AGARAI.status()).catch(() => null);
 }
 
 // Izvuci snimljene frejmove iz SVIH frame-ova (socket moze biti u iframe-u).

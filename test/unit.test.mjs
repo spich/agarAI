@@ -9,6 +9,8 @@ import vm from 'node:vm';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { decide, pickKing } from '../src/strategy.js';
+import { buildConfig } from '../src/config.js';
+import { pageScript } from '../src/browser.js';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const HOOK = fs.readFileSync(path.join(ROOT, 'src/inject/agarhook.js'), 'utf8');
@@ -16,12 +18,15 @@ const HOOK = fs.readFileSync(path.join(ROOT, 'src/inject/agarhook.js'), 'utf8');
 // ---------------------------------------------------------------------------
 // Pokreni hook u izolovanom "browseru" (vm) sa laznim WebSocket-om i DOM-om.
 // Sve se pravi UNUTAR vm realm-a (ArrayBuffer instanceof provera u hook-u).
-function loadHook(opt = {}) {
+function loadHook(opt = {}, src = null) {
   const ctx = vm.createContext({ console });
   ctx.__opt = opt;
   vm.runInContext(`
     var window = globalThis;
     window.__AGARAI_OPT = __opt;
+    var setInterval = () => 0;
+    var __bc = [];
+    class BroadcastChannel { constructor(n) { this.n = n; this.sent = []; __bc.push(this); } postMessage(m) { this.sent.push(m); } }
     var performance = { now: () => Date.now() };
     class Blob {}
     class FakeEvent { constructor(type, init) { this.type = type; Object.assign(this, init || {}); } }
@@ -43,8 +48,8 @@ function loadHook(opt = {}) {
     }
     window.WebSocket = FakeWS;
   `, ctx);
-  vm.runInContext(HOOK, ctx);
-  const ws = vm.runInContext(`new window.WebSocket('wss://srv3.agar.rs:2087')`, ctx);
+  vm.runInContext(src || HOOK, ctx);
+  const ws = vm.runInContext(`window.__AGARAI_WS = new window.WebSocket('wss://srv3.agar.rs:2087')`, ctx);
   return {
     feed: (hex) => { ctx.__h = hex; vm.runInContext('FakeWS.last.__emit(__h)', ctx); },
     state: () => JSON.parse(JSON.stringify(vm.runInContext('window.__AGARAI.getState()', ctx))),
@@ -126,12 +131,8 @@ test('kontrola: --control protocol salje tacne agar.rs pakete', () => {
 
 // ---------------------------------------------------------------------------
 // Strategija
-const CFG = {
-  threatRatio: 2.0, virusRatio: 1.0, virusAvoid: 1.15, virusPush: 1.1, fleeFactor: 2.25,
-  feedFactor: 9, safeFactor: 1.25, minFeedRatio: 0.15, minSplitSize: 45, kamiReach: 1.7,
-  feedMode: 'kamikaze', ejectPerTick: 2, splitCooldownMs: 1600, fleeLatchMs: 450,
-  kingSplit: false, kingFeedback: true, feedbackCdMs: 350, foodScope: 10,
-};
+process.argv = process.argv.slice(0, 2);                 // bez CLI flagova -> default podesavanja
+const CFG = { ...buildConfig(), fleeLatchMs: 450 };
 const MB = { minx: -9607, miny: -9607, maxx: 9607, maxy: 9607 };
 const NICKS = ['tripleXa', 'tripleXb', 'tripleXc'];
 const meAt = (x, y, size, cells = 1) => ({ x, y, size, mass: size * size / 100, maxCell: size, cellCount: cells });
@@ -202,7 +203,9 @@ test('strategija: kamikaza split JEDNOM pa cooldown; razbijen se ne split-uje vi
   const bot = { index: 1 };
   const c = (now, m = me) => decide(bot, st(m, []), ctx({ teamCenters: [king, m, null], now }));
   assert.equal(c(1000).split, true);
-  assert.ok(!c(1100).split, 'cooldown');
+  const cd = c(1100);
+  assert.ok(!cd.split, 'cooldown');
+  assert.equal(cd.note, 'ulecem u kralja');
   const frag = meAt(900, 0, 120, 4);
   const f = decide({ index: 1 }, st(frag, []), ctx({ teamCenters: [king, frag, null], now: 9000 }));
   assert.ok(!f.split);
@@ -223,10 +226,49 @@ test('strategija: kralj usisava delove razbijenog saigraca, a celog ne dira', ()
   assert.notEqual(d2.note, 'kralj kupi masu');
 });
 
-test('strategija: kralj se ne split-uje u lovu (masa na hrpi)', () => {
+test('lov: kralj split-ubija mali plen u dometu, nisani ispred plena', () => {
+  const me = meAt(0, 0, 300);
+  const bot = { index: 0 };
+  const d = decide(bot, st(me, [{ id: 2, x: 500, y: 0, size: 120, vx: 0, vy: 0.5, name: 'plen' }]), ctx({ teamCenters: [me, null, null] }));
+  assert.equal(d.split, true);
+  assert.equal(d.note, 'SPLIT-KILL');
+  assert.ok(d.aim.y > 50, 'mora nisaniti gde ce plen biti');
+  // odmah posle: cooldown -> juri bez splita
+  const d2 = decide(bot, st(me, [{ id: 2, x: 500, y: 0, size: 120, name: 'plen' }]), ctx({ teamCenters: [me, null, null], now: 1100 }));
+  assert.ok(!d2.split);
+  assert.equal(d2.note, 'kralj lovi');
+});
+
+test('lov: nema split-kill na prevelik plen (pola mene ga ne bi pojelo) - samo juri', () => {
   const me = meAt(0, 0, 400);
-  const d = decide({ index: 0 }, st(me, [{ id: 2, x: 200, y: 0, size: 100, name: 'plen' }]), ctx({ teamCenters: [me, null, null] }));
+  const d = decide({ index: 0 }, st(me, [{ id: 2, x: 600, y: 0, size: 300, name: 'plen' }]), ctx({ teamCenters: [me, null, null] }));
   assert.ok(!d.split);
+  assert.equal(d.note, 'kralj lovi');
+});
+
+test('lov: nema split-kill kad je velika pretnja u blizini', () => {
+  const me = meAt(0, 0, 300);
+  const d = decide({ index: 0 }, st(me, [
+    { id: 2, x: 500, y: 0, size: 120, name: 'plen' },
+    { id: 3, x: -1300, y: 0, size: 480, name: 'BIG' },
+  ]), ctx({ teamCenters: [me, null, null] }));
+  assert.ok(!d.split, d.note);
+});
+
+test('tim (--feedmode mixed): hranilac na putu ka kralju pumpa W u njega (aim = kralj)', () => {
+  const king = meAt(0, 0, 300);
+  const me = meAt(950, 0, 100);        // reach=(300+100)*1.7=680 < 950 < 300+100+650=1050
+  const d = decide({ index: 1 }, st(me, []), ctx({ cfg: { ...CFG, feedMode: 'mixed' }, teamCenters: [king, me, null] }));
+  assert.equal(d.note, 'HRANIM (W)');
+  assert.ok(d.feed >= 1);
+  assert.deepEqual(d.aim, { x: 0, y: 0 });
+});
+
+test('tim: premali hranilac (ne moze W ni split) uleti u kralja', () => {
+  const king = meAt(0, 0, 300);
+  const me = meAt(500, 0, 40);
+  const d = decide({ index: 1 }, st(me, []), ctx({ teamCenters: [king, me, null] }));
+  assert.equal(d.note, 'ulecem u kralja');
 });
 
 test('strategija: flee-latch drzi bekstvo kratko posle nestanka pretnje', () => {
@@ -253,4 +295,24 @@ test('pickKing: najveci CEO blob + histereza', () => {
   assert.equal(pickKing({ king: 'auto' }, tc, null), 0);
   assert.equal(pickKing({ king: 'auto' }, [{ maxCell: 500 }, { maxCell: 460 }, null], 1), 1);
   assert.equal(pickKing({ king: 'auto' }, [{ maxCell: 500 }, { maxCell: 300 }, null], 1), 0);
+});
+
+test('mozak u stranici: sam odlucuje na update, salje paket direktno, filtrira klijentov mis', () => {
+  const cfg = { ...buildConfig(), count: 3 };
+  const h = loadHook({}, pageScript(cfg, 0));
+  h.feed(OP64); h.feed(OP32);
+  h.feed(OP16_ME);                                   // update -> mozak odlucuje odmah
+  const sent = () => JSON.parse(h.call('JSON.stringify(FakeWS.last.sent.map(b => Array.from(new Uint8Array(b))))'));
+  const moves = sent().filter((a) => a[0] === 16 && a.length === 21);
+  assert.ok(moves.length >= 1, 'mozak mora poslati mis (op16, f64) bez Node-a');
+  // klijent pokusa da posalje SVOJ mis -> mora biti odbacen dok mozak vozi
+  const before = sent().length;
+  h.call('(() => { const b = new ArrayBuffer(21); new DataView(b).setUint8(0, 16); FakeWS.last.__clientSend = true; window.__AGARAI_WS.send(b); })()');
+  assert.equal(sent().length, before, 'klijentov op16 mora biti filtriran');
+  // tim kanal: objavio sam svoju poziciju
+  const posts = JSON.parse(h.call('JSON.stringify(__bc[0].sent)'));
+  assert.ok(posts.some((m) => m.i === 0 && Math.round(m.x) === 100));
+  const stt = JSON.parse(h.call('JSON.stringify(window.__AGARAI.status())'));
+  assert.equal(stt.brain, true);
+  assert.equal(stt.spawned, true);
 });
