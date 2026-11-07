@@ -92,7 +92,25 @@ export function buildConfig() {
     minSplitSize: num(A.minSplitSize, 60), // ispod ove velicine ne moze split
     kamiReach: num(A.kamiReach, 1.7),      // split u kralja kad je razmak < (kralj+ja)*ovo
     splitCooldownMs: num(A.splitCd, 1200),
-    meetRange: num(A.meetRange, 3500),     // kralj ide u susret saigracu do ove daljine
+    meetRange: num(A.meetRange, 3500),     // kralj ide u susret saigracu koji mu daje masu
+    // DAVANJE MASE: ko je razbijen odmah predaje primaocu (ne ceka spajanje);
+    // podrazumevano hranioci daju SVE pa se respawn-uju (najbrzi rast kralja).
+    // --pingpong: davalac zadrzi ostatak dovoljan da odmah primi nazad.
+    pingPong: A.pingpong === undefined ? 'auto' : A.pingpong,   // auto | --pingpong | --no-pingpong
+    pingPongAt: num(A.pingPongAt, 200),    // auto: ping-pong kad neko iz tima ima bar ovoliko mase (~2 kruga 'daj sve')
+    giveMinExcess: num(A.giveMinExcess, 30), // daje kad ima bar ovoliko VISKA iznad ostatka
+    keepMass: num(A.keepMass, 60),         // ping-pong: ostatak bar ovoliki - da moze da jede krupnu hranu
+    keepFrac: num(A.keepFrac, 0.1),        // ... ili ovoliki deo mase sa kojom je poceo da daje
+    giveRestMs: num(A.giveRest, 1500),     // pauza posle davanja pre sledeceg
+    giveSplitCdMs: num(A.giveSplitCd, 120),// razmak izmedju split-ova dok daje (sitni delovi)
+    giveFirstSplitCdMs: num(A.giveFirstSplitCd, 300),
+    recvMinFrac: num(A.recvMinFrac, 0.1),  // ceo saigrac prima razbijenog ako ima bar ovaj deo njegove mase
+    huntNeedPartner: A.huntNeedPartner !== false, // (--pingpong) kralj split-uje samo kad je partner pored
+    partnerRange: num(A.partnerRange, 1600),
+    stayRange: num(A.stayRange, 900),      // dok skuplja, drzi se ovoliko blizu primaoca
+    virusPop: A.virusPop !== false,        // davalac se namerno razbije o virus blizu primaoca (--no-virusPop)
+    popNearRecv: num(A.popNearRecv, 700),  // virus mora biti ovoliko blizu primaoca
+    popRange: num(A.popRange, 1500),       // ... i ovoliko blizu mene
     kingFeedback: A.kingFeedback !== false,
     feedbackCdMs: num(A.feedbackCd, 350),
     safeFactor: num(A.safeFactor, 1.25),   // samo za --feedmode eject
@@ -149,6 +167,9 @@ Najkorisnije opcije:
                        komande direktno u socket; node = stari, spori rezim
   --feedmode kamikaze|mixed|eject   Prebacivanje mase (default kamikaze: split/uleti u kralja)
   --no-huntSplit       Iskljuci split-kill lov
+  --pingpong / --no-pingpong   Forsiraj ping-pong (zadrzi ostatak) / uvek daj sve; default auto:
+                       prvo 'daj sve' dok kralj ne dobije --pingPongAt mase, onda ping-pong
+  --no-virusPop        Ne koristi virus za brzo razbijanje pri davanju
   --control input|protocol   Nacin slanja komandi (default protocol uz --brain page)
   --capture            Snimi sirove WebSocket frejmove u captures/ (za analizu protokola)
   --debug              Vise logova

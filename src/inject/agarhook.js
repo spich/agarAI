@@ -428,7 +428,7 @@
       if (i === IDX) return me;
       const m = team[i];
       if (!m || m.dead || nowMs - m.t > 1500) return null;
-      return { x: m.x, y: m.y, size: m.size, maxCell: m.maxCell, cellCount: m.cellCount, mass: m.mass, mx: m.mx, my: m.my };
+      return { x: m.x, y: m.y, size: m.size, maxCell: m.maxCell, cellCount: m.cellCount, mass: m.mass, mx: m.mx, my: m.my, giving: !!m.giving };
     });
   }
 
@@ -461,7 +461,7 @@
     if (chan && t - lastCast > 60) {
       lastCast = t;
       try {
-        chan.postMessage(me ? { i: IDX, t: nowMs, x: me.x, y: me.y, size: me.size, maxCell: me.maxCell, cellCount: me.cellCount, mass: me.mass, mx: me.mx, my: me.my }
+        chan.postMessage(me ? { i: IDX, t: nowMs, x: me.x, y: me.y, size: me.size, maxCell: me.maxCell, cellCount: me.cellCount, mass: me.mass, mx: me.mx, my: me.my, giving: !!bot._giving }
           : { i: IDX, t: nowMs, dead: true });
       } catch (_) {}
     }

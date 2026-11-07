@@ -25,6 +25,19 @@ function add(a, b) { return [a[0] + b[0], a[1] + b[1]]; }
 function scale(v, s) { return [v[0] * s, v[1] * s]; }
 function dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
 
+// FAZE: 1) "daj sve" - novi bot je mali kao krupna hrana na agar.rs i jedva
+// je jede, pa odmah ubaci sve u prvog i respawn-uje se (2 kruga izgrade
+// kralja); 2) PING-PONG svi sa svakim - kad je kralj narastao, svi imaju
+// mase da jedu krupnu hranu i igrace, pa se ubacuju jedan u drugog i kruna
+// rotira. --pingpong / --no-pingpong forsira fazu; default auto.
+function pingPongActive(cfg, centers) {
+  if (cfg.pingPong === true) return true;
+  if (cfg.pingPong === false) return false;
+  let mx = 0;
+  for (const c of centers || []) if (c) mx = Math.max(mx, c.mass != null ? c.mass : (c.size * c.size) / 100);
+  return mx >= (cfg.pingPongAt || 200);
+}
+
 // Kom saigracu pripada celija? Primarno po IMENU (agar.rs salje ime uz svaku
 // igracku celiju, pa i uz split-delove). Neimenovano = nije saigrac.
 function teammateOf(e, ctx, selfIndex) {
@@ -54,15 +67,18 @@ function scan(me, entities, cfg, ctx, selfIndex, isKing) {
   const viruses = [];
   const mySz = me.maxCell || me.size;
   const eatCap = mySz * 0.87;          // za jelo treba ~1.3x mase (size 1.14x)
-  const foodCap = mySz * 1.15;
+  const foodCap = mySz * 0.9;          // agar.rs hrana je krupna (prava masa) -> moram biti veci
   const eaterSz = mySz * Math.sqrt(cfg.eaterRatio || 1.3);
   for (const e of entities) {
     if (e.isMine) continue;
     if (e.isVirus) { viruses.push(e); continue; }
     const tm = teammateOf(e, ctx, selfIndex);
     if (tm >= 0) {
+      // Primalac (kralj) guta delove saigraca koji mu TRENUTNO daje masu;
+      // ostatak koji saigrac zadrzava ne dira. Bez signala: razbijen saigrac.
       const t = ctx.teamCenters && ctx.teamCenters[tm];
-      if (isKing && t && t.cellCount > 1 && e.size < eatCap) { teamEject.push(e); edible.push(e); }
+      const giving = t && (t.giving != null ? t.giving : t.cellCount > 1);
+      if (isKing && giving && e.size < eatCap) { teamEject.push(e); edible.push(e); }
       continue;
     }
     if (e.isEjected) { teamEject.push(e); if (e.size < eatCap) edible.push(e); continue; }
@@ -229,7 +245,7 @@ function pickPrey(bot, me, s, cfg, isKing, danger, now) {
 // Javna odluka: jezgro + meko zaobilazenje prepreka na kraju.
 export function decide(bot, state, ctx) {
   const res = decideCore(bot, state, ctx);
-  if (res && res.dir && bot._soft && bot._soft.length && !res.split && !res.feed) {
+  if (res && res.dir && bot._soft && bot._soft.length && !res.split && !res.feed && !res._noAvoid) {
     let nd = [res.dir[0], res.dir[1]];
     // Najjace prepreke prve: ukloni komponentu KA prepreci i zameni je
     // tangentom -> klizi oko nje umesto da se spiralno uvlaci u nju.
@@ -275,7 +291,20 @@ function decideCore(bot, state, ctx) {
   bot._fleeing = false;
 
   // ---------------- LOV / SPLIT-KILL ----------------
-  const hunt = pickPrey(bot, me, s, cfg, isKing, avoid.near || (avoid.soft.length > 0 && s.threats.length > 0), now);
+  // --pingpong: kralj sme da se razbije (split-kill) samo kad je PARTNER pored
+  // da odmah pokupi njegove delove, i ne dok mu neko upravo daje masu - inace
+  // se oba razbiju i masa se preliva tamo-amo. (Podrazumevano kralj lovi
+  // slobodno: hranioci ionako dolaze sa svezom masom.)
+  let noSplit = avoid.near || (avoid.soft.length > 0 && s.threats.length > 0);
+  if (isKing && !noSplit && pingPongActive(cfg, ctx.teamCenters)) {
+    const myMass = me.mass != null ? me.mass : (me.size * me.size) / 100;
+    const receiving = teammates.some((t) => t.giving);
+    const partner = teammates.some((t) => (t.cellCount || 1) === 1 &&
+      (t.mass != null ? t.mass : (t.size * t.size) / 100) >= myMass * (cfg.recvMinFrac || 0.1) &&
+      dist(me, t) < (cfg.partnerRange || 1600));
+    if (receiving || (cfg.huntNeedPartner !== false && !partner && teammates.length)) noSplit = true;
+  }
+  const hunt = pickPrey(bot, me, s, cfg, isKing, noSplit, now);
   if (hunt) {
     if (hunt.splitKill && now >= (bot._splitUntil || 0)) {
       bot._splitUntil = now + cfg.splitCooldownMs;
@@ -305,15 +334,18 @@ function decideCore(bot, state, ctx) {
       const v = chooseFood(bot, me, s.teamEject, cfg);
       if (v) return { dir: v, note: 'kralj kupi masu' };
     }
-    // u susret saigracu (iste smo brzine - inace me nikad ne stigne)
+    // u susret saigracu koji mi DAJE masu (u tabu znamo preko tim-kanala;
+    // bez signala: razbijen ili dovoljno velik) - inace me ne bi stigao
     {
+      const ready = Math.max(cfg.minSplitSize, me.size * cfg.minFeedRatio);
+      const givingTo = (tm) => (tm.giving != null ? tm.giving : ((tm.cellCount || 1) > 1 || tm.size >= ready));
       let ti = -1, td = Infinity;
       ctx.teamCenters.forEach((tm, i) => {
-        if (i === bot.index || !tm) return;
+        if (i === bot.index || !tm || !givingTo(tm)) return;
         const d = dist(me, tm); if (d < td) { td = d; ti = i; }
       });
       const prev = bot._meetIdx;
-      if (prev != null && prev !== ti && ctx.teamCenters[prev]) {
+      if (prev != null && prev !== ti && ctx.teamCenters[prev] && givingTo(ctx.teamCenters[prev])) {
         const pd = dist(me, ctx.teamCenters[prev]);
         if (pd < td * 1.6) { ti = prev; td = pd; }
       }
@@ -348,60 +380,134 @@ function decideCore(bot, state, ctx) {
   const kingSize = king.maxCell || king.size || 0;
   const dKing = dist(me, aimKing);
   const dirKing = norm(sub(aimKing, me));
-  // vec sam u kralju a jos nisam pojeden: nastavi pravo kroz njega (ne okreci)
-  if (dKing < kingSize * 0.8 && bot._heading) {
-    return { dir: bot._heading, note: 'ulecem u kralja' };
-  }
-
-  // Razbijen: ne split-uj vise, uleti ceo u kralja (masa na hrpu).
-  if ((me.cellCount || 1) > 1) {
-    return { aim: aimKing, dir: dirKing, note: 'ubacujem se u kralja' };
-  }
-
-  const mode = cfg.feedMode || 'mixed';
-  const canSplit = me.size >= cfg.minSplitSize;
+  const mode = cfg.feedMode || 'kamikaze';
+  const cells = me.cellCount || 1;
+  const fragmented = cells > 1;
   const canEject = me.size >= (cfg.minEjectSize || 60);
-  const reach = (kingSize + me.size) * cfg.kamiReach;
+  const reach = (kingSize + mySz) * cfg.kamiReach;
 
   if (mode === 'eject') {
     // Samo W sa bezbedne distance (stari nacin)
+    bot._giving = false;
     const safeDist = kingSize * cfg.safeFactor + Math.max(40, me.size);
     if (dKing < safeDist * 0.9) return { dir: norm(scale(dirKing, -1)), note: 'odmicem od kralja' };
     if (dKing < kingSize + me.size + cfg.ejectRange && canEject) return { aim: aimKing, dir: dirKing, speed: 0.3, feed: cfg.ejectPerTick, note: 'HRANIM (W)' };
   } else {
-    // KAMIKAZA: blizu + ceo + moze -> split u kralja (pola mase odjednom)
-    if (dKing < reach && canSplit && now >= (bot._splitUntil || 0)) {
-      bot._splitUntil = now + cfg.splitCooldownMs;
-      return { aim: aimKing, dir: dirKing, split: true, note: 'KAMIKAZA split u kralja' };
+    // ===== PING-PONG: DAJEM masu primaocu (kralju) =====
+    // Ko je razbijen (posle split-killa, virusa...) ne ceka spajanje nego
+    // ODMAH predaje; ceo bot predaje kad skupi dovoljno. Daje "skoro sve":
+    // split-uje se na delove koje primalac moze da proguta, a zadrzi mali
+    // ostatak da ostane ziv u blizini za sledecu razmenu.
+    // Ostatak ima smisla SAMO ako je dovoljan da odmah primi nazad: primalac
+    // mora imati bar ~recvMinFrac mase davaoca (davalac se razbije na <=16
+    // delova). Ako ne mogu toliko da zadrzim -> dam SVE (kamikaza; respawn
+    // donosi novu masu), umesto da sedim mali i beskoristan.
+    const kingMass = king.mass != null ? king.mass : (kingSize * kingSize) / 100;
+    const recvNeed = (kingMass + me.mass) * (cfg.recvMinFrac || 0.06) * 1.15;
+    // ostatak se odredi JEDNOM, na pocetku davanja (inace bi prag pratio masu
+    // koja opada i davalac nikad ne bi stao)
+    // Podrazumevano DAJ SVE: respawn donosi svezu masu, pa "dvojica ubace sve u
+    // prvog, pojave se opet i opet ubace" najbrze hrani kralja (i merenjem).
+    // --pingpong: zadrzi ostatak dovoljan da odmah primi nazad (kasna igra);
+    // u ranoj igri (svi mali) ostatak nema smisla ni tada.
+    const pp = pingPongActive(cfg, ctx.teamCenters);
+    // ostatak: dovoljan da jedem krupnu hranu (keepMass) i da odmah primim nazad
+    const keepWant = Math.max(cfg.keepMass || 60, recvNeed);
+    const keepNow = pp && me.mass >= keepWant + (cfg.giveMinExcess || 30) ? keepWant : 0;
+    const keep = bot._giving ? (bot._keep || 0) : keepNow;
+    if (bot._giving && keep > 0 && me.mass <= keep) { bot._giving = false; bot._giveDoneAt = now; }
+    const ready = fragmented || keep === 0 || me.mass - keep >= (cfg.giveMinExcess || 30);
+    const rested = bot._giveDoneAt == null || now - bot._giveDoneAt > (cfg.giveRestMs || 1500);
+    if (!bot._giving && ready && rested) {
+      bot._giving = true;
+      bot._keep = keepNow;
     }
-    // MIXED: na putu ka kralju pumpaj W u njega (masa leti ispred mene)
-    if (mode === 'mixed' && canEject && dKing < kingSize + me.size + cfg.ejectRange) {
-      return { aim: aimKing, dir: dirKing, feed: cfg.ejectPerTick, note: 'HRANIM (W)' };
+    if (bot._giving) {
+      // vec sam u primaocu a jos nisam progutan: nastavi pravo kroz njega
+      if (dKing < kingSize * 0.8 && bot._heading) return { dir: bot._heading, note: 'DAJEM masu' };
+      // VIRUS (cancer) TRIK: kad sam mnogo veci od primaoca, split-ovi samo
+      // polove delove; uletanjem u virus BLIZU primaoca odmah se raspadnem na
+      // do 16 sitnih komada koje on brzo pokupi.
+      if (cfg.virusPop !== false && cells <= 2 && mySz >= kingSize * 0.87) {
+        let vb = null, vs = Infinity;
+        for (const g of s.viruses) {
+          if (mySz <= g.size * 1.15) continue;                     // moram biti veci da me razbije
+          const dr = dist(g, aimKing);
+          if (dr > kingSize + (cfg.popNearRecv || 700)) continue;  // mora biti blizu primaoca
+          const dg = dist(me, g);
+          if (dg > (cfg.popRange || 1500)) continue;
+          if (dg + dr < vs) { vs = dg + dr; vb = g; }
+        }
+        if (vb) return { aim: { x: vb.x, y: vb.y }, dir: norm(sub(vb, me)), _noAvoid: true, note: 'DAJEM: razbijam se o virus' };
+      }
+      // delovi moraju biti dovoljno mali da ih primalac proguta, i ne veci od
+      // ostatka koji zadrzavam -> split-uj jos dok to ne vazi
+      const tooBigForRecv = mySz >= kingSize * 0.87;
+      const tooBig = tooBigForRecv || (keep > 0 && me.mass / cells > keep * 1.2) || cells === 1;
+      if (dKing < reach && cells < 16 && mySz >= cfg.minSplitSize && tooBig && now >= (bot._splitUntil || 0)) {
+        bot._splitUntil = now + (cells === 1 ? (cfg.giveFirstSplitCdMs || 300) : (cfg.giveSplitCdMs || 120));
+        return { aim: aimKing, dir: dirKing, split: true, note: 'DAJEM masu (split)' };
+      }
+      // W gubi ~28% mase -> SAMO kad ni 16 delova ni virus ne naprave dovoljno
+      // sitne komade za primaoca (ili ako je izricito --feedmode mixed)
+      const wLastResort = tooBigForRecv && (cells >= 16 || mySz < cfg.minSplitSize * 1.4);
+      if ((wLastResort || mode === 'mixed') && canEject && dKing < kingSize + me.size + cfg.ejectRange) {
+        return { aim: aimKing, dir: dirKing, feed: cfg.ejectPerTick, note: 'DAJEM masu (W)' };
+      }
+      return { aim: aimKing, dir: dirKing, note: 'DAJEM masu' };
     }
-    // preblizu a ne mogu nista vise -> uleti, kralj me pojede
-    if (dKing < reach) return { aim: aimKing, dir: dirKing, note: 'ulecem u kralja' };
   }
 
-  // Daleko: idi ka kralju, kupi hranu usput
+  // Ne dajem (skupljam): drzi se blizu primaoca i jedi sve sto moze (hrana,
+  // sitniji igraci - lov je vec proveren gore), da bih brzo opet imao sta da dam.
+  if (dKing > kingSize + (cfg.stayRange || 900)) {
+    const fv = chooseFood(bot, me, s.edible, cfg);
+    const blended = fv && (fv[0] * dirKing[0] + fv[1] * dirKing[1]) > 0.3 ? norm(add(scale(dirKing, 0.75), scale(fv, 0.35))) : dirKing;
+    return { dir: blended, note: 'idem ka kralju' };
+  }
+  if (dKing < kingSize + mySz + 60) {
+    // preblizu primaocu dok ne dajem - odmakni se da me ne proguta
+    return { dir: norm(scale(dirKing, -1)), note: 'skupljam (odmicem)' };
+  }
   const fv = chooseFood(bot, me, s.edible, cfg);
-  const blended = fv && (fv[0] * dirKing[0] + fv[1] * dirKing[1]) > 0.3 ? norm(add(scale(dirKing, 0.75), scale(fv, 0.35))) : dirKing;
-  return { dir: blended, note: 'idem ka kralju' };
+  return { dir: fv || dirKing, note: 'skupljam uz kralja' };
 }
 
-// Izbor kralja: najveci POJEDINACNI blob (maxCell), uz histerezu.
+// Izbor kralja = PRIMAOCA mase.
+//  - normalno: najveci pojedinacni blob (maxCell), uz histerezu
+//  - PING-PONG: ako je najveci razbijen (posle split-killa, virusa), a postoji
+//    CEO saigrac koji moze da proguta njegove delove (ima bar recvMinFrac
+//    njegove mase - davalac se split-uje do 16 delova), kruna ODMAH prelazi na
+//    celog. Razbijeni mu predaje skoro sve i niko ne ceka spajanje mase.
 export function pickKing(cfg, teamCenters, prevKing) {
   if (cfg.king !== 'auto' && cfg.king != null) {
     const k = Number(cfg.king);
     return Number.isFinite(k) ? k : 0;
   }
   const val = (c) => (c ? (c.maxCell || c.size || 0) : -1);
+  const whole = (c) => c && (c.cellCount || 1) === 1;
+  const massOf = (c) => (c.mass != null ? c.mass : (c.size * c.size) / 100);
   let best = 0, bv = -1;
   for (let i = 0; i < teamCenters.length; i++) {
     const v = val(teamCenters[i]);
     if (v > bv) { bv = v; best = i; }
   }
-  if (prevKing != null && teamCenters[prevKing] && val(teamCenters[prevKing]) >= bv * 0.85) {
-    return prevKing;
+  if (bv < 0) return prevKing != null ? prevKing : 0;
+  const B = teamCenters[best];
+  // trenutni kralj ostaje dok je ceo i blizu najboljeg (izbegni treperenje)
+  const P = prevKing != null ? teamCenters[prevKing] : null;
+  if (pingPongActive(cfg, teamCenters) && (!whole(B) || (P && !whole(P)))) {
+    // najveci (ili trenutni kralj) je razbijen -> najveci CEO koji moze da primi
+    const frag = whole(B) ? P : B;
+    let w = -1, wv = -1;
+    for (let i = 0; i < teamCenters.length; i++) {
+      const c = teamCenters[i];
+      if (!whole(c)) continue;
+      if (massOf(c) < massOf(frag) * (cfg.recvMinFrac || 0.06)) continue;
+      if (val(c) > wv) { wv = val(c); w = i; }
+    }
+    if (w >= 0) return w;
   }
+  if (P && whole(P) && val(P) >= bv * 0.85) return prevKing;
   return best;
 }

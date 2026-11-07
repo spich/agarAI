@@ -27,7 +27,8 @@ const rnd = (a, b) => a + RAND() * (b - a);
 export async function startServer(opts = {}) {
   const C = {
     half: 3000,            // mapa je [-half, half]^2
-    food: 650,
+    food: 260,             // agar.rs: hrana je krupna (size ~45-63) - kao novi igrac
+    foodMass: [20, 40],
     viruses: 14,
     enemies: [900, 420, 160, 110, 70, 60],  // pocetne mase AI protivnika
     tickMs: 40,
@@ -49,7 +50,7 @@ export async function startServer(opts = {}) {
   function randomPos(margin = 50) { return { x: rnd(-C.half + margin, C.half - margin), y: rnd(-C.half + margin, C.half - margin) }; }
   function spawnFood() {
     const p = randomPos();
-    addNode({ type: 'food', ...p, mass: 1, color: [rnd(60, 255) | 0, rnd(60, 255) | 0, rnd(60, 255) | 0] });
+    addNode({ type: 'food', ...p, mass: rnd(C.foodMass[0], C.foodMass[1]), color: [rnd(60, 255) | 0, rnd(60, 255) | 0, rnd(60, 255) | 0] });
   }
   function spawnVirus() {
     let p;
@@ -136,7 +137,7 @@ export async function startServer(opts = {}) {
   }
   function popOnVirus(o, c) {
     const free = 16 - o.cells.size;
-    const pieces = Math.min(free, 7);
+    const pieces = Math.min(free, 15);
     o.stats.virusPops++;
     if (pieces <= 0) return;
     const each = c.mass / (pieces + 1);

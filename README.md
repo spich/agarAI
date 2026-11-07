@@ -14,12 +14,26 @@ mapu) spojenu iz svega što sva tri bota vide.
 
 Svaki tab ima **sopstveni mozak** (`src/strategy.js` ubačen u stranicu) koji
 odlučuje na svaki paket od servera (~25×/s) i šalje komande **direktno u
-socket** (agar.rs protokol). Tabovi tima dele pozicije preko
+socket** (agar.rs protokol). Tabovi dele pozicije i ko kome daje masu preko
 `BroadcastChannel`-a. Node samo pokreće tabove, prikazuje status i po potrebi
-klikne Play. Rutine po prioritetu: **bekstvo** (≥2× mase) → **split-kill**
-(plen dovoljno mali, u dometu, sa predviđanjem kretanja) → **lov** → kralj
-**kupi masu / ide u susret hraniocu** → hranilac **se split-uje u kralja**
-(razbijen uleti ceo; `--feedmode mixed` dodaje i W) → hrana.
+klikne Play.
+
+**Taktika tima (faze):**
+1. **Daj sve ×2** — novi bot je mali kao krupna hrana na agar.rs i jedva je
+   jede, pa se odmah ubaci u prvog (split u njega) i respawn-uje. Dva kruga
+   tako izgrade prvog.
+2. **Ping-pong, svi sa svakim** — kad neko ima `--pingPongAt` (200) mase, svi
+   imaju dovoljno da jedu krupnu hranu i igrače: svako jede što pre i ubacuje
+   **skoro sve** u primaoca, a zadrži ostatak (bar `--keepMass`, i dovoljno da
+   odmah primi nazad). Ko se razbije (split-kill, virus) **ne čeka spajanje**:
+   kruna prelazi na celog saigrača i razbijeni mu predaje delove. Kralj
+   split-ubija kad je partner pored da pokupi delove.
+3. **Virus trik** — kad je davalac mnogo veći od primaoca, uleti u virus pored
+   njega i raspadne se na sitne komade koje primalac brzo pokupi. **W** se
+   koristi samo kad ni to ni 16 delova nisu dovoljno (gubi ~28% mase).
+
+Ostale rutine: bekstvo (≥2× mase), lov sa predviđanjem kretanja, hrana ispred
+(anti-jitter), klizanje oko virusa i pretnji.
 
 ## Kako radi (detaljno)
 
@@ -96,7 +110,12 @@ Pragovi pretnje su **po masi** (kao u igri), ne po veličini.
 | Opcija | Default | Šta radi |
 |---|---|---|
 | `--brain page\|node` | page | Mozak u tabu (brzo) ili stari Node režim |
-| `--feedmode` | kamikaze | `kamikaze` = split/uleti u kralja (merenje: najbolje); `mixed` = + W; `eject` |
+| `--pingpong` / `--no-pingpong` | auto | Forsiraj ping-pong / uvek daj sve; auto = faze (merenje: najbolje) |
+| `--pingPongAt` | 200 | Od ove mase (bilo koji bot) kreće ping-pong |
+| `--keepMass` | 60 | Ping-pong: ostatak bar ovoliki (da jede krupnu hranu) |
+| `--recvMinFrac` | 0.1 | Ceo saigrač prima razbijenog ako ima bar ovaj deo njegove mase |
+| `--no-virusPop` | uključen | Ne koristi virus za brzo razbijanje pri davanju |
+| `--feedmode` | kamikaze | `kamikaze` = split/uleti; `mixed` = + W; `eject` = samo W sa distance |
 | `--huntRange` / `--no-huntSplit` | 8 / uključen | Domet lova kralja (`veličina×ovo+300`) / split-kill |
 | `--splitKillDist` / `--maxHuntCells` | 420 / 2 | Domet mog splita / ne split-uj ako sam već u više delova |
 | `--huntLock` / `--huntGiveUp` | 900 / 2500 | Drži započet lov / odustani ako se ne približavam (ms) |

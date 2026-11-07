@@ -197,19 +197,55 @@ test('strategija: tudji igrac sa imenom se NE maskira kao saigrac', () => {
   assert.equal(d.note, 'bezim od pretnje');
 });
 
-test('strategija: kamikaza split JEDNOM pa cooldown; razbijen se ne split-uje vise', () => {
-  const king = meAt(0, 0, 500);
-  const me = meAt(900, 0, 120);
+test('ping-pong: mali naspram velikog kralja daje SVE (ostatak ne bi mogao da primi nazad)', () => {
+  const king = meAt(0, 0, 500);                        // masa 2500
+  const me = meAt(900, 0, 120);                        // masa 144 < 6% od 2644 -> keep 0
   const bot = { index: 1 };
   const c = (now, m = me) => decide(bot, st(m, []), ctx({ teamCenters: [king, m, null], now }));
-  assert.equal(c(1000).split, true);
-  const cd = c(1100);
-  assert.ok(!cd.split, 'cooldown');
-  assert.equal(cd.note, 'ulecem u kralja');
-  const frag = meAt(900, 0, 120, 4);
-  const f = decide({ index: 1 }, st(frag, []), ctx({ teamCenters: [king, frag, null], now: 9000 }));
-  assert.ok(!f.split);
-  assert.equal(f.note, 'ubacujem se u kralja');
+  const d1 = c(1000);
+  assert.equal(d1.split, true);
+  assert.equal(d1.note, 'DAJEM masu (split)');
+  const d2 = c(1100);                                  // cooldown -> ulece
+  assert.ok(!d2.split);
+  assert.equal(d2.note, 'DAJEM masu');
+  const frag = { ...meAt(900, 0, 120, 4), maxCell: 60 };   // sitni delovi -> samo ubacuje
+  const d3 = c(2000, frag);
+  assert.ok(!d3.split);
+  assert.equal(d3.note, 'DAJEM masu');
+  const tiny = meAt(900, 0, 50);                       // i mrvica ide u kralja (ne sedi beskorisno)
+  assert.equal(c(3000, tiny).note, 'DAJEM masu');
+});
+
+test('--pingpong: uporedivi botovi - davalac zadrzi ostatak dovoljan da primi nazad', () => {
+  const king = meAt(0, 0, 300);                        // masa 900
+  const me = meAt(700, 0, 250);                        // masa 625 -> keep ~175
+  const bot = { index: 1 };
+  const c = (now, m) => decide(bot, st(m, []), ctx({ cfg: { ...CFG, pingPong: true }, teamCenters: [king, m, null], now }));
+  const d1 = c(1000, me);
+  assert.equal(d1.note, 'DAJEM masu (split)');
+  assert.equal(bot._giving, true);
+  const rest = meAt(700, 0, 100);                      // masa 100 <= ostatak ~105 -> staje
+  const d2 = c(2000, rest);
+  assert.equal(bot._giving, false);
+  assert.ok(/skupljam/.test(d2.note), d2.note);
+});
+
+test('ping-pong: ogroman davalac se namerno razbije o virus pored malog primaoca', () => {
+  const king = meAt(0, 0, 100);                        // mali primalac
+  const me = meAt(800, 0, 400);                        // ogroman davalac
+  const d = decide({ index: 1 }, st(me, [{ id: 9, x: 150, y: 0, size: 100, isVirus: true }]),
+    ctx({ teamCenters: [king, me, null] }));
+  assert.equal(d.note, 'DAJEM: razbijam se o virus');
+  assert.deepEqual(d.aim, { x: 150, y: 0 });
+  assert.ok(d.dir[0] < -0.999, 'ide pravo u virus, bez izbegavanja');
+});
+
+test('ping-pong: razbijen kralj odmah predaje krunu celom saigracu (ako moze da primi)', () => {
+  const frag = { x: 0, y: 0, size: 500, maxCell: 400, cellCount: 4, mass: 2500 };
+  const small = { x: 300, y: 0, size: 100, maxCell: 100, cellCount: 1, mass: 100 };   // 4% - premalo
+  assert.equal(pickKing({ king: 'auto', recvMinFrac: 0.06 }, [frag, small, null], 0), 0);
+  const ok = { ...small, size: 141, maxCell: 141, mass: 200 };                        // 8% - moze
+  assert.equal(pickKing({ king: 'auto', recvMinFrac: 0.06 }, [frag, ok, null], 0), 1);
 });
 
 test('strategija: kralj usisava delove razbijenog saigraca, a celog ne dira', () => {
@@ -259,16 +295,17 @@ test('tim (--feedmode mixed): hranilac na putu ka kralju pumpa W u njega (aim = 
   const king = meAt(0, 0, 300);
   const me = meAt(950, 0, 100);        // reach=(300+100)*1.7=680 < 950 < 300+100+650=1050
   const d = decide({ index: 1 }, st(me, []), ctx({ cfg: { ...CFG, feedMode: 'mixed' }, teamCenters: [king, me, null] }));
-  assert.equal(d.note, 'HRANIM (W)');
+  assert.equal(d.note, 'DAJEM masu (W)');
   assert.ok(d.feed >= 1);
   assert.deepEqual(d.aim, { x: 0, y: 0 });
 });
 
-test('tim: premali hranilac (ne moze W ni split) uleti u kralja', () => {
+test('--pingpong: posle davanja (pauza) uporedivi bot skuplja uz kralja, ne ulece', () => {
   const king = meAt(0, 0, 300);
-  const me = meAt(500, 0, 40);
-  const d = decide({ index: 1 }, st(me, []), ctx({ teamCenters: [king, me, null] }));
-  assert.equal(d.note, 'ulecem u kralja');
+  const me = meAt(700, 0, 250);
+  const bot = { index: 1, _giveDoneAt: 900 };          // upravo dao -> pauza
+  const d = decide(bot, st(me, []), ctx({ cfg: { ...CFG, pingPong: true }, teamCenters: [king, me, null], now: 1000 }));
+  assert.equal(d.note, 'skupljam uz kralja');
 });
 
 test('strategija: flee-latch drzi bekstvo kratko posle nestanka pretnje', () => {
@@ -315,4 +352,34 @@ test('mozak u stranici: sam odlucuje na update, salje paket direktno, filtrira k
   const stt = JSON.parse(h.call('JSON.stringify(window.__AGARAI.status())'));
   assert.equal(stt.brain, true);
   assert.equal(stt.spawned, true);
+});
+
+test('--pingpong: kralj split-ubija samo kad je partner pored da pokupi delove', () => {
+  const me = meAt(0, 0, 300);                                      // masa 900
+  const prey = [{ id: 2, x: 500, y: 0, size: 120, name: 'plen' }];
+  const PP = { ...CFG, pingPong: true };
+  const far = meAt(5000, 0, 120);                                  // daleko -> nema partnera
+  assert.ok(!decide({ index: 0 }, st(me, prey), ctx({ cfg: PP, teamCenters: [me, far, null] })).split);
+  const near = meAt(-600, 0, 120);                                 // ceo, 16% mase, blizu -> partner
+  const d = decide({ index: 0 }, st(me, prey), ctx({ cfg: PP, teamCenters: [me, near, null] }));
+  assert.equal(d.note, 'SPLIT-KILL');
+  const giving = { ...near, giving: true };                        // upravo mi daje -> ne razbijam se
+  assert.ok(!decide({ index: 0 }, st(me, prey), ctx({ cfg: PP, teamCenters: [me, giving, null] })).split);
+  // faza "daj sve" (--no-pingpong): kralj lovi slobodno i bez partnera
+  assert.equal(decide({ index: 0 }, st(me, prey), ctx({ cfg: { ...CFG, pingPong: false }, teamCenters: [me, far, null] })).note, 'SPLIT-KILL');
+});
+
+test('faze: dok je tim mali - daj sve; kad kralj naraste - ping-pong sa ostatkom za krupnu hranu', () => {
+  const small = meAt(0, 0, 100);                       // kralj 100 mase < pingPongAt 200
+  const me = meAt(500, 0, 110);                        // 121 mase
+  const b1 = { index: 1 };
+  decide(b1, st(me, []), ctx({ teamCenters: [small, me, null] }));
+  assert.equal(b1._giving, true);
+  assert.equal(b1._keep, 0, 'faza 1: daje sve');
+  const big = meAt(0, 0, 200);                         // kralj 400 mase >= 200 -> ping-pong
+  const me2 = meAt(800, 0, 140);                       // 196 mase
+  const b2 = { index: 1 };
+  decide(b2, st(me2, []), ctx({ teamCenters: [big, me2, null] }));
+  assert.equal(b2._giving, true);
+  assert.ok(b2._keep >= 60, `faza 2: zadrzi ostatak za krupnu hranu, keep=${b2._keep}`);
 });
