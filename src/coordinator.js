@@ -65,6 +65,14 @@ async function runMonitor(fleet, cfg, log) {
         botRejoin(b, cfg).catch(() => {});
       }
     });
+    // tabovi moraju da se vide (tim=N); ako ne, igraju svaki za sebe
+    const aliveN = sts.filter((s) => s && s.spawned).length;
+    const blind = sts.some((s) => s && s.spawned && aliveN > 1 && s.teamSeen < aliveN - 1);
+    if (blind) { if (!fleet._blindSince) fleet._blindSince = now; } else fleet._blindSince = 0;
+    if (fleet._blindSince && now - fleet._blindSince > 3000 && (!fleet._blindWarn || now - fleet._blindWarn > 10000)) {
+      fleet._blindWarn = now;
+      log('UPOZORENJE: tabovi se ne vide (tim=' + sts.map((s) => (s ? s.teamSeen : '-')).join('/') + ') - igraju svaki za sebe. Javi mi ovo.');
+    }
     const line = sts.map((s, i) => {
       const nick = bots[i].nick;
       if (!s) return `${nick}: (nema statusa)`;

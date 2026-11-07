@@ -39,6 +39,7 @@ async function main() {
     if (stopping) return; stopping = true;
     log('gasim...');
     if (cfg.capture) await dumpCaptures(fleet, cfg, log);
+    if (fleet.stopRelay) fleet.stopRelay();
     await fleet.browser.close().catch(() => {});
     process.exit(0);
   };

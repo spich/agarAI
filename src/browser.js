@@ -24,6 +24,7 @@ export function pageScript(cfg, index) {
     control: cfg.control,
     debug: cfg.debug,
     brain: cfg.brain === 'page' && cfg.team,
+    noBroadcast: !!cfg.noBroadcast,         // dijagnostika: tim samo preko Node-a
     index,
     nicks,
     cfg,                                    // sva podesavanja strategije
@@ -48,9 +49,18 @@ export async function launchFleet(cfg, log) {
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36',
   });
 
+  // REZERVNI TIM-KANAL preko Node-a: tab salje poruke kroz __agaraiOut, a mi
+  // svakih 100ms prosledimo ostalim tabovima najnovije stanje svakog saigraca.
+  // (BroadcastChannel ne povezuje tabove ako je igra u iframe-u drugog origin-a.)
+  const relay = new Map();                     // "tip:indeks" -> poslednja poruka
   const bots = [];
   for (let i = 0; i < cfg.count; i++) {
     const page = await context.newPage();
+    if (cfg.brain === 'page' && cfg.team) {
+      await page.exposeBinding('__agaraiOut', (_src, msg) => {
+        if (msg && typeof msg.i === 'number') relay.set(`${msg.type || 'state'}:${msg.i}`, msg);
+      }).catch(() => {});
+    }
     // Opcije (svoj indeks!) + mozak + hook u JEDNOM init skriptu, za svaki
     // frame ovog taba (ukljucujuci iframe klona).
     await page.addInitScript({ content: pageScript(cfg, i) });
@@ -73,7 +83,20 @@ export async function launchFleet(cfg, log) {
     await joinGame(bot, cfg, log);
   }
 
-  return { browser, context, bots };
+  let relayTimer = null;
+  if (cfg.brain === 'page' && cfg.team) {
+    relayTimer = setInterval(() => {
+      const all = [...relay.values()];
+      for (const b of bots) {
+        const list = all.filter((m) => m.i !== b.index);
+        if (!list.length) continue;
+        const f = b.frame || b.page.mainFrame();
+        f.evaluate((l) => window.__AGARAI && window.__AGARAI.recv && window.__AGARAI.recv(l), list).catch(() => {});
+      }
+    }, 100);
+  }
+
+  return { browser, context, bots, stopRelay: () => relayTimer && clearInterval(relayTimer) };
 }
 
 // Tekst dugmadi za cookie/GDPR pristanak (agar.rs prikaze "Pristajem" i sl.).

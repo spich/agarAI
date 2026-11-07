@@ -485,11 +485,17 @@ function decideCore(bot, state, ctx) {
     const pp = pingPongActive(cfg, ctx.teamCenters);
     // ostatak: dovoljan da jedem krupnu hranu (keepMass) i da odmah primim nazad
     const keepWant = Math.max(cfg.keepMass || 60, recvNeed);
-    const keepNow = pp && me.mass >= keepWant + (cfg.giveMinExcess || 30) ? keepWant : 0;
+    // Faza 1 (tim mali): daj sve. Faza 2: pratnja NIKAD ne daje sve - posle
+    // respawna ide do nosioca, drzi formaciju i raste jeduci oko sebe; daje
+    // samo VISAK iznad ostatka (ostatak = dovoljno da pokupi nosioca kad se
+    // razdeli).
+    const keepNow = pp ? keepWant : 0;
     const keep = bot._giving ? (bot._keep || 0) : keepNow;
     if (bot._giving && keep > 0 && me.mass <= keep) { bot._giving = false; bot._giveDoneAt = now; }
-    const ready = fragmented || keep === 0 || me.mass - keep >= (cfg.giveMinExcess || 30);
-    const rested = bot._giveDoneAt == null || now - bot._giveDoneAt > (cfg.giveRestMs || 1500);
+    // razbijen daje ODMAH ceo visak (bez pauze - protivnicki skriptovi u toj
+    // pauzi pojedu delove); ceo bot daje kad skupi bar giveMinExcess viska
+    const ready = keep === 0 || me.mass - keep >= (fragmented ? 5 : (cfg.giveMinExcess || 30));
+    const rested = fragmented || bot._giveDoneAt == null || now - bot._giveDoneAt > (cfg.giveRestMs || 1500);
     if (!bot._giving && ready && rested) {
       bot._giving = true;
       bot._keep = keepNow;

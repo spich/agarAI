@@ -82,7 +82,7 @@ export function buildConfig() {
     huntLockMs: num(A.huntLock, 900),      // zapocet lov traje bar ovoliko (anti-jitter)
     maxKillSplits: num(A.maxKillSplits, 4),// split-kill do quad splita (x2..x4)
     splitMinPreyFrac: num(A.splitMinPreyFrac, 0.02), // plen vredi split-a ako ima bar ovaj deo moje mase
-    huntHoldMs: num(A.huntHold, 900),      // razbijen nosilac zadrzava krunu dok lovi (+ovoliko)
+    huntHoldMs: num(A.huntHold, 250),      // razbijen nosilac zadrzava krunu dok lovi (+ovoliko) - kratko, bez praznog hoda
     commitMs: num(A.commit, 450),          // obicna odluka vazi bar ovoliko (odlucnost)
     escortGap: num(A.escortGap, 180),      // pratnja: razmak od nosioca
     escortAngle: num(A.escortAngle, 140),  // pratnja: ugao iza-levo/iza-desno od smera nosioca
@@ -159,6 +159,8 @@ export function buildConfig() {
     sniff: A.sniff === true,
     // Ispisi svaki nagli okret (>100 stepeni) i koja ga promena odluke izaziva.
     jitterLog: A.jitterLog === true,
+    // Dijagnostika: iskljuci BroadcastChannel (tim samo preko Node rezervnog kanala).
+    noBroadcast: A.noBroadcast === true,
   };
   // Diag/sniff ispisuju tekst koji bi mapa obrisala -> ugasi mapu.
   if (cfg.diag || cfg.sniff) cfg.map = false;

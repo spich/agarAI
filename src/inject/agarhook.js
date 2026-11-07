@@ -409,16 +409,28 @@
   // Odlucuje na svaki update od servera (~25x/s). Nema Node-a u petlji.
   const team = NICKS.map(() => null);            // poslednja poruka od svakog saigraca
   let roles = null;                              // poslednja odluka vodje: { i, carrier, t }
+  // Slanje timu: BroadcastChannel (brzo) + REZERVA preko Node-a (window.__agaraiOut,
+  // izlozen iz Playwright-a) - radi i kad je igra u iframe-u/drugom origin-u
+  // gde BroadcastChannel ne povezuje tabove.
+  const lastOut = {};
+  function cast(msg) {
+    if (chan) { try { chan.postMessage(msg); } catch (_) {} }
+    const k = msg.type || 'state';
+    if (typeof window.__agaraiOut === 'function' && (!lastOut[k] || msg.t - lastOut[k] >= 100)) {
+      lastOut[k] = msg.t;
+      try { window.__agaraiOut(msg); } catch (_) {}
+    }
+  }
+  function take(m) {
+    if (!m || typeof m.i !== 'number' || m.i === IDX) return;
+    if (m.type === 'roles') { if (!roles || m.t >= roles.t) roles = m; }
+    else if (!team[m.i] || m.t >= team[m.i].t) team[m.i] = m;
+  }
   let chan = null;
-  if (BRAIN && typeof BroadcastChannel !== 'undefined') {
+  if (BRAIN && !OPT.noBroadcast && typeof BroadcastChannel !== 'undefined') {
     try {
       chan = new BroadcastChannel('agarai-team');
-      chan.onmessage = (e) => {
-        const m = e.data;
-        if (!m || typeof m.i !== 'number' || m.i === IDX) return;
-        if (m.type === 'roles') roles = m;            // odluka vodje tima: ko je nosilac
-        else team[m.i] = m;
-      };
+      chan.onmessage = (e) => take(e.data);
     } catch (_) { chan = null; }
   }
   const bot = { index: IDX, nick: NICKS[IDX] || '' };
@@ -464,10 +476,10 @@
     if (!firstStep) firstStep = t;
     const nowMs = Date.now();
     const me = myCenter();
-    if (chan && t - lastCast > 60) {
+    if (t - lastCast > 60) {
       lastCast = t;
       try {
-        chan.postMessage(me ? { i: IDX, t: nowMs, x: me.x, y: me.y, size: me.size, maxCell: me.maxCell, cellCount: me.cellCount, mass: me.mass, mx: me.mx, my: me.my, giving: !!bot._giving, hunting: nowMs < (bot._huntingUntil || 0), hx: bot._heading ? bot._heading[0] : null, hy: bot._heading ? bot._heading[1] : null }
+        cast(me ? { i: IDX, t: nowMs, x: me.x, y: me.y, size: me.size, maxCell: me.maxCell, cellCount: me.cellCount, mass: me.mass, mx: me.mx, my: me.my, giving: !!bot._giving, hunting: nowMs < (bot._huntingUntil || 0), hx: bot._heading ? bot._heading[0] : null, hy: bot._heading ? bot._heading[1] : null }
           : { i: IDX, t: nowMs, dead: true });
       } catch (_) {}
     }
@@ -491,7 +503,7 @@
     const leader = alive.length ? alive[0] : IDX;
     if (leader === IDX) {
       kingIdx = STRAT.pickKing(BCFG, centers, prevKing);
-      if (chan) { try { chan.postMessage({ type: 'roles', i: IDX, carrier: kingIdx, t: nowMs }); } catch (_) {} }
+      cast({ type: 'roles', i: IDX, carrier: kingIdx, t: nowMs });
     } else if (roles && roles.i === leader && nowMs - roles.t < 600 && centers[roles.carrier]) {
       kingIdx = roles.carrier;
     } else {
@@ -581,6 +593,7 @@
     ready: true,
     getState, command, move, split, feed, respawn, status,
     pause: (p) => { paused = !!p; },
+    recv: (list) => { for (const m of list || []) take(m); },   // tim poruke preko Node-a
     _dumpCaptures: () => captures.slice(),
   });
 

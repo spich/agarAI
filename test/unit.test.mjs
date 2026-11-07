@@ -201,7 +201,8 @@ test('ping-pong: mali naspram velikog kralja daje SVE (ostatak ne bi mogao da pr
   const king = meAt(0, 0, 500);                        // masa 2500
   const me = meAt(900, 0, 120);                        // masa 144 < 6% od 2644 -> keep 0
   const bot = { index: 1 };
-  const c = (now, m = me) => decide(bot, st(m, []), ctx({ teamCenters: [king, m, null], now }));
+  const P1 = { ...CFG, pingPong: false };              // faza 1: daj sve
+  const c = (now, m = me) => decide(bot, st(m, []), ctx({ cfg: P1, teamCenters: [king, m, null], now }));
   const d1 = c(1000);
   assert.equal(d1.split, true);
   assert.equal(d1.note, 'DAJEM masu (split)');
@@ -294,7 +295,7 @@ test('lov: nema split-kill kad je velika pretnja u blizini', () => {
 test('tim (--feedmode mixed): hranilac na putu ka kralju pumpa W u njega (aim = kralj)', () => {
   const king = meAt(0, 0, 300);
   const me = meAt(950, 0, 100);        // reach=(300+100)*1.7=680 < 950 < 300+100+650=1050
-  const d = decide({ index: 1 }, st(me, []), ctx({ cfg: { ...CFG, feedMode: 'mixed' }, teamCenters: [king, me, null] }));
+  const d = decide({ index: 1 }, st(me, []), ctx({ cfg: { ...CFG, feedMode: 'mixed', pingPong: false }, teamCenters: [king, me, null] }));
   assert.equal(d.note, 'DAJEM masu (W)');
   assert.ok(d.feed >= 1);
   assert.deepEqual(d.aim, { x: 0, y: 0 });
@@ -384,7 +385,7 @@ test('faze: dok je tim mali - daj sve; kad kralj naraste - ping-pong sa ostatkom
   assert.ok(b2._keep >= 60, `faza 2: zadrzi ostatak za krupnu hranu, keep=${b2._keep}`);
 });
 
-const SM = { ...CFG, escapeSplit: true, travelSplit: true };
+const SM = { ...CFG, escapeSplit: true, travelSplit: true, pingPong: false };
 test('split za kretanje (--escapeSplit): beg splitom kad je pretnja na korak, ali ne u virus', () => {
   const me = meAt(0, 0, 150);
   const T = [{ id: 2, x: 420, y: 0, size: 300, name: 'BIG' }];      // razmak ivica 420-300-150 = -30
@@ -465,4 +466,25 @@ test('odlucnost: obicna odluka se drzi commitMs, bekstvo je prekida odmah', () =
   assert.equal(b.note, 'kralj jede');
   const f = c(1200, [{ id: 7, x: 260, y: 0, size: 300, name: 'BIG' }]);
   assert.ok(/bezim|BEG/.test(f.note), 'bekstvo prekida odmah');
+});
+
+test('faza 2: respawn-ovan mali bot se NE ubija u nosioca - ide do njega i postaje pratnja', () => {
+  const king = { ...meAt(0, 0, 500), hx: 1, hy: 0 };               // nosilac 2500 mase -> faza 2
+  const fresh = meAt(4000, 0, 63);                                 // tek respawn-ovan, daleko
+  const b = { index: 1 };
+  const d = decide(b, st(fresh, []), ctx({ teamCenters: [king, fresh, null] }));
+  assert.equal(d.note, 'idem ka kralju');
+  assert.ok(!b._giving, 'ne daje sve');
+  const near = meAt(-700, 300, 63);                                // stigao blizu -> formacija
+  const d2 = decide({ index: 1 }, st(near, []), ctx({ teamCenters: [king, near, null], slot: 0 }));
+  assert.ok(/pratnja/.test(d2.note), d2.note);
+});
+
+test('faza 2: razbijen bot daje visak ODMAH, bez pauze', () => {
+  const king = meAt(0, 0, 300);                                    // 900 mase
+  const frag = { ...meAt(600, 0, 400, 4), maxCell: 200 };          // 1600 mase razbijen
+  const b = { index: 1, _giveDoneAt: 990 };                        // upravo je dao (pauza bi blokirala)
+  const d = decide(b, st(frag, []), ctx({ teamCenters: [king, frag, null], now: 1000 }));
+  assert.equal(b._giving, true);
+  assert.ok(/DAJEM/.test(d.note), d.note);
 });
