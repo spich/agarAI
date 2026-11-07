@@ -227,7 +227,7 @@ test('--pingpong: uporedivi botovi - davalac zadrzi ostatak dovoljan da primi na
   const rest = meAt(700, 0, 100);                      // masa 100 <= ostatak ~105 -> staje
   const d2 = c(2000, rest);
   assert.equal(bot._giving, false);
-  assert.ok(/skupljam/.test(d2.note), d2.note);
+  assert.ok(/skupljam|pratnja/.test(d2.note), d2.note);
 });
 
 test('ping-pong: ogroman davalac se namerno razbije o virus pored malog primaoca', () => {
@@ -305,7 +305,7 @@ test('--pingpong: posle davanja (pauza) uporedivi bot skuplja uz kralja, ne ulec
   const me = meAt(700, 0, 250);
   const bot = { index: 1, _giveDoneAt: 900 };          // upravo dao -> pauza
   const d = decide(bot, st(me, []), ctx({ cfg: { ...CFG, pingPong: true }, teamCenters: [king, me, null], now: 1000 }));
-  assert.equal(d.note, 'skupljam uz kralja');
+  assert.ok(/pratnja/.test(d.note), d.note);
 });
 
 test('strategija: flee-latch drzi bekstvo kratko posle nestanka pretnje', () => {
@@ -414,4 +414,55 @@ test('split za kretanje (--travelSplit): davalac daleko od primaoca split-uje ka
   // pretnja u blizini -> bez travel splita (razbijen bi bio lak plen)
   const d2 = decide({ index: 1 }, st(me, [{ id: 3, x: 3000, y: 900, size: 200, name: 'X' }]), ctx({ cfg: SM, teamCenters: [king, me, null] }));
   assert.notEqual(d2.note, 'BRZO ka kralju (split)');
+});
+
+test('lov: daleki mali plen -> double/triple/quad split (najmanji broj koji stize)', () => {
+  const me = meAt(0, 0, 400);                                      // masa 1600
+  const bot = { index: 0 };
+  // plen 60 na 1300: 1 split ne stize, 2 stizu (prednji deo 1/4 mase jos jede plen)
+  const d = decide(bot, st(me, [{ id: 2, x: 1300, y: 0, size: 60, name: 'plen' }]), ctx({ teamCenters: [me, null, null] }));
+  assert.equal(d.note, 'SPLIT-KILL x2');
+  assert.equal(d.split, true);
+  // sledeci tik: drugi split odmah (burst), bez cekanja cooldown-a
+  const d2 = decide(bot, st({ ...me, cellCount: 2 }, []), ctx({ teamCenters: [me, null, null], now: 1040 }));
+  assert.equal(d2.split, true);
+  assert.equal(d2.note, 'SPLIT-KILL x2');
+  // jos dalje (2300) -> quad
+  const d3 = decide({ index: 0 }, st(me, [{ id: 3, x: 2300, y: 0, size: 60, name: 'plen' }]), ctx({ teamCenters: [me, null, null] }));
+  assert.equal(d3.note, 'SPLIT-KILL x4');
+});
+
+test('nosilac: razbijen koji jos lovi zadrzava krunu; kad nema plena -> najblizi iz pratnje', () => {
+  const frag = { x: 0, y: 0, size: 500, maxCell: 300, cellCount: 4, mass: 2500 };
+  const near = { x: 400, y: 0, size: 200, maxCell: 200, cellCount: 1, mass: 400 };
+  const far = { x: 3000, y: 0, size: 250, maxCell: 250, cellCount: 1, mass: 625 };
+  const cfgA = { king: 'auto', recvMinFrac: 0.1, pingPong: true };
+  assert.equal(pickKing(cfgA, [{ ...frag, hunting: true }, near, far], 0), 0, 'jos lovi -> ostaje nosilac');
+  assert.equal(pickKing(cfgA, [frag, near, far], 0), 1, 'nema plena -> najblizi ceo iz pratnje');
+});
+
+test('pratnja: drzi mesto iza-levo/iza-desno od nosioca i jede hranu oko sebe', () => {
+  const king = { ...meAt(0, 0, 300), hx: 1, hy: 0 };               // nosilac ide desno
+  const me = meAt(-200, -900, 100);
+  const d = decide({ index: 1, _giveDoneAt: 900 }, st(me, []), ctx({ cfg: { ...CFG, pingPong: true }, teamCenters: [king, me, null], slot: 0 }));
+  assert.equal(d.note, 'pratnja (formacija)');
+  assert.ok(d.aim.x < 0, 'mesto je IZA nosioca');
+  // na svom mestu, hrana pored -> jede
+  const R = 300 + 100 + 180, a = 140 * Math.PI / 180;
+  const sx = Math.cos(a) * R, sy = Math.sin(a) * R;
+  const me2 = meAt(sx, sy, 100);
+  const d2 = decide({ index: 1, _giveDoneAt: 900 }, st(me2, [{ id: 5, x: sx + 80, y: sy, size: 40, isFood: true }]), ctx({ cfg: { ...CFG, pingPong: true }, teamCenters: [king, me2, null], slot: 0 }));
+  assert.equal(d2.note, 'pratnja jede');
+});
+
+test('odlucnost: obicna odluka se drzi commitMs, bekstvo je prekida odmah', () => {
+  const me = meAt(0, 0, 100);
+  const bot = { index: 0 };
+  const c = (now, ents) => decide(bot, st(me, ents), ctx({ teamCenters: [me, null, null], now }));
+  const a = c(1000, [{ id: 5, x: 200, y: 0, size: 20, isFood: true }]);
+  assert.equal(a.note, 'kralj jede');
+  const b = c(1100, []);                                           // hrana nestala -> i dalje drzi nameru
+  assert.equal(b.note, 'kralj jede');
+  const f = c(1200, [{ id: 7, x: 260, y: 0, size: 300, name: 'BIG' }]);
+  assert.ok(/bezim|BEG/.test(f.note), 'bekstvo prekida odmah');
 });

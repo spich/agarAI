@@ -22,7 +22,14 @@ klikne Play.
 1. **Daj sve ×2** — novi bot je mali kao krupna hrana na agar.rs i jedva je
    jede, pa se odmah ubaci u prvog (split u njega) i respawn-uje. Dva kruga
    tako izgrade prvog.
-2. **Ping-pong, svi sa svakim** — kad neko ima `--pingPongAt` (200) mase, svi
+2. **Formacija + ping-pong** — jedan je **nosilac**, druga dvojica su
+   **pratnja** iza-levo/iza-desno od njega i jedu sve oko sebe. Nosilac
+   napada **split-killom do quad splita** (bira najmanji broj splitova kojim
+   dobaci do plena, a da prednji deo i dalje može da ga pojede); dok ima koga
+   da jede, nastavlja; čim nema, **vraća masu najbližem iz pratnje** koji
+   postaje nosilac. **Vođa tima** (najmanji živi indeks) jedini bira nosioca
+   i javlja ostalima, a obična odluka se drži bar `--commit` ms (odlučnost).
+   Ping-pong, svi sa svakim — kad neko ima `--pingPongAt` (200) mase, svi
    imaju dovoljno da jedu krupnu hranu i igrače: svako jede što pre i ubacuje
    **skoro sve** u primaoca, a zadrži ostatak (bar `--keepMass`, i dovoljno da
    odmah primi nazad). Ko se razbije (split-kill, virus) **ne čeka spajanje**:
@@ -112,6 +119,10 @@ Pragovi pretnje su **po masi** (kao u igri), ne po veličini.
 | `--brain page\|node` | page | Mozak u tabu (brzo) ili stari Node režim |
 | `--pingpong` / `--no-pingpong` | auto | Forsiraj ping-pong / uvek daj sve; auto = faze (merenje: najbolje) |
 | `--pingPongAt` | 200 | Od ove mase (bilo koji bot) kreće ping-pong |
+| `--maxKillSplits` | 4 | Split-kill do quad splita (x2..x4) |
+| `--splitMinPreyFrac` | 0.02 | Plen vredi splita ako ima bar ovaj deo moje mase |
+| `--commit` | 450 | Obična odluka važi bar ovoliko ms (odlučnost) |
+| `--escortGap` / `--escortAngle` | 180 / 140 | Pratnja: razmak od nosioca / ugao iza-levo/desno |
 | `--keepMass` | 60 | Ping-pong: ostatak bar ovoliki (da jede krupnu hranu) |
 | `--recvMinFrac` | 0.1 | Ceo saigrač prima razbijenog ako ima bar ovaj deo njegove mase |
 | `--no-virusPop` | uključen | Ne koristi virus za brzo razbijanje pri davanju |
@@ -119,7 +130,6 @@ Pragovi pretnje su **po masi** (kao u igri), ne po veličini.
 | `--travelSplit` | isključen | Davalac split-uje ka primaocu da stigne brže (sim: lošije) |
 | `--feedmode` | kamikaze | `kamikaze` = split/uleti; `mixed` = + W; `eject` = samo W sa distance |
 | `--huntRange` / `--no-huntSplit` | 8 / uključen | Domet lova kralja (`veličina×ovo+300`) / split-kill |
-| `--splitKillDist` / `--maxHuntCells` | 420 / 2 | Domet mog splita / ne split-uj ako sam već u više delova |
 | `--huntLock` / `--huntGiveUp` | 900 / 2500 | Drži započet lov / odustani ako se ne približavam (ms) |
 | `--ejectRange` | 650 | Hranilac pumpa W kad je kralj bliži od `(ja+kralj)+ovo` |
 | `--maxTurn` | 180 (isklj.) | Ograničenje okretanja po odluci (merenje: slabi lov) |

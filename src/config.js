@@ -77,10 +77,17 @@ export function buildConfig() {
     feederHuntRange: num(A.feederHuntRange, 2.5), // hranioci jure plen samo ovako blizu
     huntSplit: A.huntSplit !== false,      // split-kill ukljucen (--no-huntSplit iskljucuje)
     splitKillDist: num(A.splitKillDist, 420), // domet mog splita od ivice
-    splitMinPrey: num(A.splitMinPrey, 0.25),  // ne split-uj za plen manji od mySz*ovo
     maxHuntCells: num(A.maxHuntCells, 2),  // ne split-uj u lovu ako sam vec u vise od ovoliko delova
     leadMs: num(A.leadMs, 200),            // predvidjanje kretanja plena
     huntLockMs: num(A.huntLock, 900),      // zapocet lov traje bar ovoliko (anti-jitter)
+    maxKillSplits: num(A.maxKillSplits, 4),// split-kill do quad splita (x2..x4)
+    splitMinPreyFrac: num(A.splitMinPreyFrac, 0.02), // plen vredi split-a ako ima bar ovaj deo moje mase
+    huntHoldMs: num(A.huntHold, 900),      // razbijen nosilac zadrzava krunu dok lovi (+ovoliko)
+    commitMs: num(A.commit, 450),          // obicna odluka vazi bar ovoliko (odlucnost)
+    escortGap: num(A.escortGap, 180),      // pratnja: razmak od nosioca
+    escortAngle: num(A.escortAngle, 140),  // pratnja: ugao iza-levo/iza-desno od smera nosioca
+    escortTol: num(A.escortTol, 300),      // pratnja: koliko sme da odstupi od mesta da bi jela
+    escortFood: num(A.escortFood, 450),    // pratnja: jede hranu ovoliko oko svog mesta
     huntGiveUpMs: num(A.huntGiveUp, 2500), // odustani od plena ako mu se ovoliko ne priblizavam
     maxTurnDeg: num(A.maxTurn, 180),       // glatko upravljanje: max okret po odluci (180 = iskljuceno; merenje: ogranicenje slabi lov)
     fleeTurnDeg: num(A.fleeTurn, 180),     // ... u bekstvu

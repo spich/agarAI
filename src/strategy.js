@@ -197,7 +197,8 @@ function pickPrey(bot, me, s, cfg, isKing, danger, now) {
   // Na daljinu juri samo plen koji mogu da SPLIT-ubijem (prilazim do dometa
   // splita); ostali plen samo kad je vec blizu.
   const canHuntSplit = !!cfg.huntSplit && (me.cellCount || 1) <= (cfg.maxHuntCells || 2);
-  const splitable = (p) => canHuntSplit && p.size < mySz * 0.62 && p.size > mySz * (cfg.splitMinPrey || 0.25);
+  // vredi splita: plen ima bar splitMinPreyFrac moje MASE (multi-split dobaci i do sitnijeg)
+  const splitable = (p) => canHuntSplit && p.size < mySz * 0.62 && p.size * p.size >= mySz * mySz * (cfg.splitMinPreyFrac || 0.02);
   const nearRange = mySz * 1.8 + 100;
   let best = null, bv = -1;
   for (const p of s.prey) {
@@ -253,11 +254,22 @@ function pickPrey(bot, me, s, cfg, isKing, danger, now) {
   // Split-kill: pola moje najvece celije mora pojesti plen (plen < mySz*0.62),
   // plen je u dometu leta splita, vredi ga (nije sitnis), nema pretnje u
   // blizini (inace bi mi razbijene delove pojeli) i nisam vec razbijen.
-  const splitKill = !!cfg.huntSplit && !danger &&
-    (me.cellCount || 1) <= (cfg.maxHuntCells || 2) &&
-    best.size < mySz * 0.62 && best.size > mySz * (cfg.splitMinPrey || 0.25) &&
-    d > mySz * 0.9 && d < mySz + (cfg.splitKillDist || 420);
-  return { prey: best, d, aim, splitKill, close: d < mySz * 2.5 };
+  // VISESTRUKI SPLIT-KILL: n brzih split-ova (double/triple/quad) dobaci
+  // prednji deo ~n puta dalje, ali je on 2^n puta manji. Biram NAJMANJI n kojim
+  // stizem do plena, a da prednji deo i dalje moze da ga pojede.
+  let splits = 0;
+  const worth = best.size * best.size >= mySz * mySz * (cfg.splitMinPreyFrac || 0.02);
+  if (cfg.huntSplit && !danger && worth && d > mySz * 0.9) {
+    const cells = me.cellCount || 1;
+    for (let n = 1; n <= (cfg.maxKillSplits || 4); n++) {
+      if (cells * Math.pow(2, n) > 16) break;
+      const pieceSz = mySz / Math.pow(2, n / 2);
+      if (best.size >= pieceSz / 1.14) break;                   // prednji deo bi bio premali za plen
+      const reach = mySz * 0.7 + n * (cfg.splitFly || 650) * 0.85;
+      if (d - best.size * 0.3 <= reach) { splits = n; break; }
+    }
+  }
+  return { prey: best, d, aim, splitKill: splits > 0, splits, close: d < mySz * 2.5 };
 }
 
 // Javna odluka: jezgro + meko zaobilazenje prepreka na kraju.
@@ -281,6 +293,26 @@ export function decide(bot, state, ctx) {
     // pravac se promenio -> tacna meta (aim) vise ne vazi, vozimo po pravcu
     if (res.aim && (Math.abs(before[0] - res.dir[0]) > 1e-3 || Math.abs(before[1] - res.dir[1]) > 1e-3)) res.aim = null;
   }
+  // ODLUCNOST: obicna odluka (formacija, hrana, put...) vazi bar commitMs -
+  // ne menja se svaki tik. Odmah se menja samo zbog bekstva, split-a, davanja
+  // ili smrti.
+  if (res && res.dir && state && state.me && (ctx.cfg.commitMs || 0) > 0) {
+    const now = ctx.now || 0;
+    const urgent = res.split || res._flee || res.feed || /bezim|BEG|SPLIT|DAJEM|virus|mrtav/.test(res.note || '');
+    const c = bot._commit;
+    if (urgent) bot._commit = null;
+    else if (c && now < c.until && c.note !== res.note) {
+      const me = state.me;
+      return finish(bot, { aim: c.aim, dir: norm(sub(c.aim, me)), note: c.note });
+    } else if (!c || c.note !== res.note || now >= c.until) {
+      const me = state.me;
+      const a = res.aim || { x: me.x + res.dir[0] * 600, y: me.y + res.dir[1] * 600 };
+      bot._commit = { note: res.note, aim: a, until: now + ctx.cfg.commitMs };
+    }
+  }
+  return finish(bot, res);
+}
+function finish(bot, res) {
   if (res && res.dir) bot._heading = res.dir;
   return res;
 }
@@ -319,6 +351,14 @@ function decideCore(bot, state, ctx) {
   }
   bot._fleeing = false;
 
+  // zapoceti double/triple/quad split: ispali ostale split-ove odmah zaredom
+  if (bot._burst && bot._burst.left > 0 && now < bot._burst.until) {
+    bot._burst.left--;
+    const a = bot._burst.aim;
+    return { aim: a, dir: norm(sub(a, me)), split: true, note: `SPLIT-KILL x${bot._burst.n}` };
+  }
+  bot._burst = null;
+
   // ---------------- LOV / SPLIT-KILL ----------------
   // --pingpong: kralj sme da se razbije (split-kill) samo kad je PARTNER pored
   // da odmah pokupi njegove delove, i ne dok mu neko upravo daje masu - inace
@@ -334,10 +374,13 @@ function decideCore(bot, state, ctx) {
     if (receiving || (cfg.huntNeedPartner !== false && !partner && teammates.length)) noSplit = true;
   }
   const hunt = pickPrey(bot, me, s, cfg, isKing, noSplit, now);
+  if (hunt && isKing) bot._huntingUntil = now + (cfg.huntHoldMs || 900);  // javi timu: jos lovim
   if (hunt) {
     if (hunt.splitKill && now >= (bot._splitUntil || 0)) {
       bot._splitUntil = now + cfg.splitCooldownMs;
-      return { aim: hunt.aim, dir: norm(sub(hunt.aim, me)), split: true, note: 'SPLIT-KILL' };
+      const n = hunt.splits || 1;
+      if (n > 1) bot._burst = { left: n - 1, n, aim: hunt.aim, until: now + 500 };
+      return { aim: hunt.aim, dir: norm(sub(hunt.aim, me)), split: true, note: n > 1 ? `SPLIT-KILL x${n}` : 'SPLIT-KILL' };
     }
     if (isKing || hunt.close) {
       return { aim: hunt.aim, dir: norm(sub(hunt.aim, me)), note: isKing ? 'kralj lovi' : 'lovim usput' };
@@ -497,19 +540,33 @@ function decideCore(bot, state, ctx) {
     }
   }
 
-  // Ne dajem (skupljam): drzi se blizu primaoca i jedi sve sto moze (hrana,
-  // sitniji igraci - lov je vec proveren gore), da bih brzo opet imao sta da dam.
+  // PRATNJA U FORMACIJI: drzi mesto iza-levo / iza-desno od nosioca (u odnosu
+  // na njegov smer), jedi sve oko svog mesta; kad se nosilac razdeli da
+  // pojede nekoga, tu si da pokupis delove (i postanes nosilac).
   if (dKing > kingSize + (cfg.stayRange || 900)) {
     const fv = chooseFood(bot, me, s.edible, cfg);
     const blended = fv && (fv[0] * dirKing[0] + fv[1] * dirKing[1]) > 0.3 ? norm(add(scale(dirKing, 0.75), scale(fv, 0.35))) : dirKing;
     return { dir: blended, note: 'idem ka kralju' };
   }
-  if (dKing < kingSize + mySz + 60) {
-    // preblizu primaocu dok ne dajem - odmakni se da me ne proguta
-    return { dir: norm(scale(dirKing, -1)), note: 'skupljam (odmicem)' };
+  const R = kingSize + mySz + (cfg.escortGap || 180);
+  const kh = king.hx != null && Math.hypot(king.hx, king.hy) > 0.5 ? [king.hx, king.hy] : null;
+  let off;
+  if (kh) {
+    const slot = ctx.slot != null ? ctx.slot : (bot.index % 2);
+    const ang = (slot === 1 ? -1 : 1) * (cfg.escortAngle || 140) * Math.PI / 180;
+    off = [kh[0] * Math.cos(ang) - kh[1] * Math.sin(ang), kh[0] * Math.sin(ang) + kh[1] * Math.cos(ang)];
+  } else {
+    off = norm(sub(me, aimKing));
   }
-  const fv = chooseFood(bot, me, s.edible, cfg);
-  return { dir: fv || dirKing, note: 'skupljam uz kralja' };
+  const slotPos = { x: aimKing.x + off[0] * R, y: aimKing.y + off[1] * R };
+  const dSlot = dist(me, slotPos);
+  const nearFood = s.edible.filter((f) => dist(f, slotPos) < (cfg.escortFood || 450) && dist(f, aimKing) > kingSize + f.size);
+  if (dSlot < (cfg.escortTol || 300) && nearFood.length) {
+    const fv = chooseFood(bot, me, nearFood, cfg);
+    return { dir: fv, note: 'pratnja jede' };
+  }
+  if (dSlot > 40) return { aim: slotPos, dir: norm(sub(slotPos, me)), note: 'pratnja (formacija)' };
+  return { dir: kh || dirKing, speed: 0.3, note: 'pratnja (formacija)' };
 }
 
 // Izbor kralja = PRIMAOCA mase.
@@ -538,12 +595,16 @@ export function pickKing(cfg, teamCenters, prevKing) {
   if (pingPongActive(cfg, teamCenters) && (!whole(B) || (P && !whole(P)))) {
     // najveci (ili trenutni kralj) je razbijen -> najveci CEO koji moze da primi
     const frag = whole(B) ? P : B;
-    let w = -1, wv = -1;
+    // razbijen nosilac koji JOS LOVI (ima koga da pojede) zadrzava krunu
+    if (frag && frag.hunting) return frag === P ? prevKing : best;
+    // nema vise plena -> masa se vraca NAJBLIZEM celom iz pratnje koji moze da primi
+    let w = -1, wd = Infinity;
     for (let i = 0; i < teamCenters.length; i++) {
       const c = teamCenters[i];
-      if (!whole(c)) continue;
+      if (!whole(c) || c === frag) continue;
       if (massOf(c) < massOf(frag) * (cfg.recvMinFrac || 0.06)) continue;
-      if (val(c) > wv) { wv = val(c); w = i; }
+      const d = Math.hypot(c.x - frag.x, c.y - frag.y);
+      if (d < wd) { wd = d; w = i; }
     }
     if (w >= 0) return w;
   }

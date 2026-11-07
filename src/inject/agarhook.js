@@ -408,11 +408,17 @@
   // ========================== MOZAK U STRANICI ==========================
   // Odlucuje na svaki update od servera (~25x/s). Nema Node-a u petlji.
   const team = NICKS.map(() => null);            // poslednja poruka od svakog saigraca
+  let roles = null;                              // poslednja odluka vodje: { i, carrier, t }
   let chan = null;
   if (BRAIN && typeof BroadcastChannel !== 'undefined') {
     try {
       chan = new BroadcastChannel('agarai-team');
-      chan.onmessage = (e) => { const m = e.data; if (m && typeof m.i === 'number' && m.i !== IDX) team[m.i] = m; };
+      chan.onmessage = (e) => {
+        const m = e.data;
+        if (!m || typeof m.i !== 'number' || m.i === IDX) return;
+        if (m.type === 'roles') roles = m;            // odluka vodje tima: ko je nosilac
+        else team[m.i] = m;
+      };
     } catch (_) { chan = null; }
   }
   const bot = { index: IDX, nick: NICKS[IDX] || '' };
@@ -428,7 +434,7 @@
       if (i === IDX) return me;
       const m = team[i];
       if (!m || m.dead || nowMs - m.t > 1500) return null;
-      return { x: m.x, y: m.y, size: m.size, maxCell: m.maxCell, cellCount: m.cellCount, mass: m.mass, mx: m.mx, my: m.my, giving: !!m.giving };
+      return { x: m.x, y: m.y, size: m.size, maxCell: m.maxCell, cellCount: m.cellCount, mass: m.mass, mx: m.mx, my: m.my, giving: !!m.giving, hunting: !!m.hunting, hx: m.hx, hy: m.hy };
     });
   }
 
@@ -461,7 +467,7 @@
     if (chan && t - lastCast > 60) {
       lastCast = t;
       try {
-        chan.postMessage(me ? { i: IDX, t: nowMs, x: me.x, y: me.y, size: me.size, maxCell: me.maxCell, cellCount: me.cellCount, mass: me.mass, mx: me.mx, my: me.my, giving: !!bot._giving }
+        chan.postMessage(me ? { i: IDX, t: nowMs, x: me.x, y: me.y, size: me.size, maxCell: me.maxCell, cellCount: me.cellCount, mass: me.mass, mx: me.mx, my: me.my, giving: !!bot._giving, hunting: nowMs < (bot._huntingUntil || 0), hx: bot._heading ? bot._heading[0] : null, hy: bot._heading ? bot._heading[1] : null }
           : { i: IDX, t: nowMs, dead: true });
       } catch (_) {}
     }
@@ -479,9 +485,23 @@
     deadSince = 0;
     const st = getState();
     const centers = teamCenters(st.me, nowMs);
-    kingIdx = STRAT.pickKing(BCFG, centers, prevKing);
+    // VODJA TIMA = najmanji zivi indeks. Samo on bira nosioca i javlja ostalima,
+    // da se uloge ne klackaju (svaki tab bi inace racunao za sebe).
+    const alive = centers.map((c, i) => (c ? i : -1)).filter((i) => i >= 0);
+    const leader = alive.length ? alive[0] : IDX;
+    if (leader === IDX) {
+      kingIdx = STRAT.pickKing(BCFG, centers, prevKing);
+      if (chan) { try { chan.postMessage({ type: 'roles', i: IDX, carrier: kingIdx, t: nowMs }); } catch (_) {} }
+    } else if (roles && roles.i === leader && nowMs - roles.t < 600 && centers[roles.carrier]) {
+      kingIdx = roles.carrier;
+    } else {
+      kingIdx = STRAT.pickKing(BCFG, centers, prevKing);   // vodja se ne cuje - sam
+    }
     prevKing = kingIdx;
-    const cmd = STRAT.decide(bot, st, { cfg: BCFG, kingIndex: kingIdx, teamCenters: centers, teamNicks: NICKS, now: nowMs });
+    // mesto u formaciji: pratnja sortirana po indeksu -> 0 = iza-levo, 1 = iza-desno
+    const supports = alive.filter((i) => i !== kingIdx);
+    const slot = supports.indexOf(IDX);
+    const cmd = STRAT.decide(bot, st, { cfg: BCFG, kingIndex: kingIdx, teamCenters: centers, teamNicks: NICKS, now: nowMs, slot: slot >= 0 ? slot : 0 });
     note = cmd.note || '-';
     steps++;
     // GLATKO UPRAVLJANJE: ogranici brzinu okretanja smera. Kolebanje cilja
