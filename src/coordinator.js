@@ -85,7 +85,10 @@ export async function runCoordinator(fleet, cfg, log) {
     const kingIndex = pickKing(cfg, world.teamCenters, prevKing);
     prevKing = kingIndex;
     const kingCenter = world.teamCenters[kingIndex] || null;
-    const ctx = { cfg, kingIndex, teamCenters: world.teamCenters, now: Date.now() };
+    const ctx = {
+      cfg, kingIndex, teamCenters: world.teamCenters, now: Date.now(),
+      teamNicks: bots.map((b) => b.nick),          // saigrace prepoznajemo po imenu
+    };
 
     // 3) Odluci i posalji komandu svakom botu (osim ako je --no-team,
     //    onda samo posmatramo i crtamo mapu).
@@ -96,6 +99,7 @@ export async function runCoordinator(fleet, cfg, log) {
         const st = states[i];
         // Mrtav / nije jos u igri -> pokusaj respawn (usporeno da ne spamuje).
         if (!st || !st.spawned) {
+          b._prevAlive = false;                       // posle respawna nov pravac nije jitter
           if (!b._lastRejoin || now - b._lastRejoin > 2500) {
             b._lastRejoin = now;
             notes.push(`${b.nick}:RESPAWN`);
@@ -107,6 +111,16 @@ export async function runCoordinator(fleet, cfg, log) {
         }
         const cmd = decide(b, st, ctx);
         notes.push(`${b.nick}:${cmd.note || '-'}`);
+        // --jitterLog: zabelezi svaki okret > 100 stepeni i koja ga promena odluke izaziva
+        if (cfg.jitterLog && cmd.dir && b._prevDir && b._prevAlive) {
+          const c = cmd.dir[0] * b._prevDir[0] + cmd.dir[1] * b._prevDir[1];
+          if (c < -0.17) {
+            const dt = b._lastFlipAt ? now - b._lastFlipAt : 99999;
+            b._lastFlipAt = now;
+            log(`JITTER ${b.nick}: ${b._prevNote} -> ${cmd.note} | dt=${dt}`);
+          }
+        }
+        b._prevDir = cmd.dir || b._prevDir; b._prevNote = cmd.note; b._prevAlive = true;
         await botCommand(b, cmd);
       }));
     } else {

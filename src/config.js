@@ -53,7 +53,14 @@ export function buildConfig() {
 
     // Parametri strategije. RELATIVNI su (u odnosu na velicinu celije), da
     // bi radili na bilo kojoj skali klona (agar.rs koristi vece brojeve).
-    threatRatio: num(A.threatRatio, 2.0),  // pretnja tek ako je >2x (moze split-lov); manji te ne stize
+    threatRatio: num(A.threatRatio, 2.0),  // PO MASI: bezi tek od >=2x mase (moze split-lov)
+    threatBand: num(A.threatBand, 1.6),    // zona zaobilazenja pretnje = zona bekstva * ovo (anti petlja)
+    fleeExit: num(A.fleeExit, 1.25),       // bekstvo traje dok pretnja nije dalje od zone*ovo
+    splitReach: num(A.splitReach, 500),    // domet tudjeg splita: bezi bar (ja+on)+ovo od >=2x pretnje
+    eaterRatio: num(A.eaterRatio, 1.3),    // po masi: >1.3x moze da te pojede dodirom -> ne diraj ga
+    eaterAvoid: num(A.eaterAvoid, 1.4),    // blago odbijanje od takvih: (ja+on)*ovo
+    turnPenalty: num(A.turnPenalty, 1.5),  // prednost hrani ispred (anti-jitter); 0 = najbliza
+    meetRange: num(A.meetRange, 3500),     // kralj ide u susret spremnom hraniocu do ove daljine
     virusRatio: num(A.virusRatio, 1.0),    // izbegavaj virus samo ako sam veci od njega * ovo
     virusAvoid: num(A.virusAvoid, 1.15),   // tesan radijus oko virusa = me.size*ovo (+ pola virusa)
     virusPush: num(A.virusPush, 1.1),      // jacina blagog skretanja oko virusa (prolazi blizu)
@@ -71,6 +78,7 @@ export function buildConfig() {
     fleeLatchMs: num(A.fleeLatch, 450),    // koliko ostaje u bekstvu posle detekcije pretnje (anti-jitter)
     kingSplit: A.kingSplit === true,       // da li kralj sme da se split-uje u lovu (default NE - masa na hrpi)
     kingFeedback: A.kingFeedback !== false,// kralj dobaci malo mase sitnom suigracu (rotacija)
+    feedbackCdMs: num(A.feedbackCd, 350),  // razmak izmedju kraljevih dobacivanja (W)
     foodScope: num(A.foodScope, 10),       // gledaj samo hranu blizu (me.size*ovo) - anti-jitter
 
     // Kontrola: 'input' (sinteticki mis/tastatura, najotpornije)
@@ -93,6 +101,8 @@ export function buildConfig() {
     diag: A.diag === true,
     // Sniff: ispisi hex paketa uzivo u terminal (za rekonstrukciju protokola).
     sniff: A.sniff === true,
+    // Ispisi svaki nagli okret (>100 stepeni) i koja ga promena odluke izaziva.
+    jitterLog: A.jitterLog === true,
   };
   // Diag/sniff ispisuju tekst koji bi mapa obrisala -> ugasi mapu.
   if (cfg.diag || cfg.sniff) cfg.map = false;

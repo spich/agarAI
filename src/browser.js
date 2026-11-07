@@ -105,17 +105,29 @@ async function fillNickAndPlay(page, nick, cfg, log) {
     await nickEl.click({ timeout: 1500 }).catch(() => {});
     await nickEl.fill(nick).catch(() => {});
   }
-  for (const frame of page.frames()) {
-    let els;
-    try { els = await frame.$$('button, [role="button"], a, input[type="button"], input[type="submit"], div'); }
-    catch (_) { continue; }
-    for (const el of els) {
-      let txt = '';
-      try { txt = (await el.innerText({ timeout: 120 })).trim(); } catch (_) { continue; }
-      if (!txt || txt.length > 24) continue;
-      if (PLAY_RX.some((r) => r.test(txt))) {
-        const vis = await el.isVisible().catch(() => false);
-        if (vis) { await el.click({ timeout: 1500 }).catch(() => {}); if (log) log(`  play: "${txt}"`); return true; }
+  // Prioritet: prava dugmad pa linkovi pa tek onda div-ovi. Ranije su div-ovi
+  // bili pomesani sa dugmadima, pa je mogao da se klikne KONTEJNER menija
+  // (ciji je tekst takodje "Play") umesto samog dugmeta.
+  const GROUPS = [
+    'button, input[type="button"], input[type="submit"], [role="button"]',
+    'a',
+    'div, span',
+  ];
+  for (const sel of GROUPS) {
+    for (const frame of page.frames()) {
+      let els;
+      try { els = await frame.$$(sel); } catch (_) { continue; }
+      for (const el of els) {
+        let txt = '';
+        try {
+          txt = (await el.innerText({ timeout: 120 })).trim();
+          if (!txt) txt = ((await el.getAttribute('value')) || '').trim();
+        } catch (_) { continue; }
+        if (!txt || txt.length > 24) continue;
+        if (PLAY_RX.some((r) => r.test(txt))) {
+          const vis = await el.isVisible().catch(() => false);
+          if (vis) { await el.click({ timeout: 1500 }).catch(() => {}); if (log) log(`  play: "${txt}"`); return true; }
+        }
       }
     }
   }

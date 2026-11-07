@@ -71,7 +71,8 @@
   // Klasifikacija celije po velicini/flagu.
   function classify(cell) {
     cell.isVirus = !!(cell.flags & 0x01);
-    cell.isEjected = !!(cell.flags & 0x10);
+    // MultiOgar-Edited (protokol 4): 0x20 = izbacena masa (0x10 = "agitated")
+    cell.isEjected = !cell.isVirus && !!(cell.flags & 0x30);
     // hrana = male celije bez imena (nisu virus/moje). Prag je relativan na
     // ono sto na agar.rs vidimo (pellet-i ~64, virus ~100, igraci vece).
     cell.isFood = !cell.isVirus && !cell.isMine && !cell.isEjected &&
@@ -79,22 +80,6 @@
   }
 
   // --------------------- DEKODER: opcode 16 (update sveta) --------------
-  // Format (MultiOgar / vanilla novije verzije, little-endian):
-  //   u8  opcode = 16
-  //   u16 eatCount
-  //   eatCount x { u32 eaterId, u32 eatenId }        -> eatenId se uklanja
-  //   loop:
-  //     u32 id;  if id==0 -> kraj celija
-  //     i32 x
-  //     i32 y
-  //     u16 size (radijus)
-  //     u8  flags   (0x01 virus, 0x02 ext, 0x04 skin, 0x08 name, 0x10 ejected)
-  //     [ako flags & 0x02: u8 extFlags + preskoci prema njemu]  (retko, tolerantno)
-  //     u8 r, u8 g, u8 b
-  //     [ako flags & 0x04: utf8 skin \0]
-  //     [ako flags & 0x08: utf16 name \0]
-  //   u16 removeCount
-  //   removeCount x { u32 id }                        -> uklanja se
   // FORMAT ZA agar.rs (MultiOgar-Edited 1.6.1), potvrdjen iz --sniff hexa:
   //   u8  op = 16
   //   u16 eatCount
@@ -196,6 +181,8 @@
     const op = view.getUint8(0);
     switch (op) {
       case 16: decodeUpdate(view); break;
+      case 18: cells.clear(); ownedIds.clear(); break;   // ClearAll (respawn) - bez duhova
+      case 20: ownedIds.clear(); break;                  // ClearOwned
       case 32: decodeAddOwned(view); break;
       case 64: decodeMapSize(view); break;
       default: /* leaderboard/spectate/itd. nam nisu presudni */ break;
@@ -259,23 +246,22 @@
 
   const canvas = () => document.querySelector('canvas') || document.body;
 
+  // VAZNO: dogadjaj saljemo JEDNOM, na canvas, sa bubbles:true. On se sam
+  // propagira canvas -> body -> document -> window, pa ga dobije svaki
+  // listener klijenta. Ranije smo slali i na window i na document, pa je
+  // klijent koji slusa na window dobijao 2 pritiska -> dupli split/eject.
   function dispatchMouse(cx, cy) {
-    const el = canvas();
-    for (const type of ['mousemove']) {
-      const ev = new MouseEvent(type, {
-        clientX: cx, clientY: cy, bubbles: true, cancelable: true, view: window,
-      });
-      el.dispatchEvent(ev);
-      window.dispatchEvent(ev);
-      document.dispatchEvent(ev);
-    }
+    const ev = new MouseEvent('mousemove', {
+      clientX: cx, clientY: cy, bubbles: true, cancelable: true, view: window,
+    });
+    canvas().dispatchEvent(ev);
   }
 
   function pressKey(key, code, keyCode) {
+    const target = canvas();
     for (const type of ['keydown', 'keyup']) {
-      const ev = new KeyboardEvent(type, { key, code, keyCode, which: keyCode, bubbles: true });
-      window.dispatchEvent(ev);
-      document.dispatchEvent(ev);
+      const ev = new KeyboardEvent(type, { key, code, keyCode, which: keyCode, bubbles: true, cancelable: true });
+      target.dispatchEvent(ev);
     }
   }
 

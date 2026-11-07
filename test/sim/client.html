@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="sr">
+<head>
+<meta charset="utf-8">
+<title>mock agar.rs</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #f2f2f2; font-family: Arial, sans-serif; }
+  canvas { display: block; }
+  #consent { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center; z-index: 20; }
+  #consent .box { background: #fff; padding: 22px 26px; border-radius: 8px; max-width: 420px; }
+  #consent button { margin: 8px 8px 0 0; padding: 8px 14px; }
+  #menu { position: fixed; top: 45%; left: 50%; transform: translate(-50%, -50%); background: rgba(20,20,20,.85); padding: 18px; border-radius: 8px; z-index: 10; }
+  #menu input { padding: 8px; width: 160px; }
+  #menu button { padding: 8px 18px; margin-left: 6px; }
+  #hud { position: fixed; left: 8px; top: 6px; font: 13px monospace; color: #333; z-index: 5; }
+</style>
+</head>
+<body>
+<div id="consent"><div class="box">
+  <p>Ova web-lokacija traži pristanak za upotrebu vaših podataka za ove svrhe.</p>
+  <button id="agree">Pristajem</button><button id="manage">Upravljaj opcijama</button>
+</div></div>
+<div id="menu"><input id="nick" placeholder="Nick" maxlength="15"><button id="play">Play</button></div>
+<div id="hud"></div>
+<canvas id="c"></canvas>
+<script>
+(function () {
+  const spectate = new URLSearchParams(location.search).has('spectate');
+  const cv = document.getElementById('c'), g = cv.getContext('2d');
+  const menu = document.getElementById('menu'), nickEl = document.getElementById('nick'), hud = document.getElementById('hud');
+  function resize() { cv.width = innerWidth; cv.height = innerHeight; }
+  resize(); addEventListener('resize', resize);
+  document.getElementById('agree').onclick = () => document.getElementById('consent').remove();
+  if (spectate) menu.style.display = 'none';
+
+  const nodes = new Map(), own = new Set();
+  let border = { minx: -3000, miny: -3000, maxx: 3000, maxy: 3000 };
+  let mouse = { x: innerWidth / 2, y: innerHeight / 2 };
+  let cam = { x: 0, y: 0, s: 1 };
+  let wasAlive = false, deadSince = 0;
+
+  const ws = new WebSocket('ws://' + location.host + '/ws');
+  ws.binaryType = 'arraybuffer';
+  function send(arr) { if (ws.readyState === 1) ws.send(new Uint8Array(arr).buffer); }
+  ws.onopen = () => { send([254, 5, 0, 0, 0]); send([255, 0x72, 0x61, 0x67, 0x4f]); if (spectate) send([1]); };
+  ws.onmessage = (ev) => {
+    const v = new DataView(ev.data), op = v.getUint8(0);
+    if (op === 16) decode(v);
+    else if (op === 18) { nodes.clear(); own.clear(); }
+    else if (op === 20) own.clear();
+    else if (op === 32) { own.add(v.getUint32(1, true)); menu.style.display = 'none'; wasAlive = true; }
+    else if (op === 64) border = { minx: v.getFloat64(1, true), miny: v.getFloat64(9, true), maxx: v.getFloat64(17, true), maxy: v.getFloat64(25, true) };
+  };
+  function decode(v) {
+    let o = 1;
+    const ec = v.getUint16(o, true); o += 2;
+    for (let i = 0; i < ec; i++) { o += 4; const p = v.getUint32(o, true); o += 4; nodes.delete(p); own.delete(p); }
+    for (;;) {
+      const id = v.getUint32(o, true); o += 4; if (!id) break;
+      const x = v.getInt16(o, true); o += 2; const y = v.getInt16(o, true); o += 2;
+      const s = v.getUint16(o, true); o += 2;
+      const r = v.getUint8(o++), gg = v.getUint8(o++), b = v.getUint8(o++), f = v.getUint8(o++);
+      let name = ''; for (;;) { const c = v.getUint16(o, true); o += 2; if (!c) break; name += String.fromCharCode(c); }
+      nodes.set(id, { x, y, s, r, g: gg, b, f, name });
+    }
+    const rc = v.getUint32(o, true); o += 4;
+    for (let i = 0; i < rc; i++) { const id = v.getUint32(o, true); o += 4; nodes.delete(id); own.delete(id); }
+  }
+
+  // Ulaz kao kod tipicnog agar klijenta: mis i tasteri na WINDOW.
+  addEventListener('mousemove', (e) => { mouse = { x: e.clientX, y: e.clientY }; });
+  addEventListener('keydown', (e) => {
+    if (document.activeElement === nickEl) return;
+    if (e.keyCode === 32 || e.key === ' ') send([17]);
+    if (e.keyCode === 87 || e.key === 'w' || e.key === 'W') send([21]);
+  });
+  document.getElementById('play').onclick = () => {
+    const n = nickEl.value || 'neimenovan', a = [0];
+    for (const ch of n) { const c = ch.charCodeAt(0); a.push(c & 255, c >> 8); }
+    send(a);
+  };
+
+  function myCells() { return [...own].map((id) => nodes.get(id)).filter(Boolean); }
+  function updateCam() {
+    if (spectate) {
+      const w = border.maxx - border.minx, h = border.maxy - border.miny;
+      cam = { x: (border.minx + border.maxx) / 2, y: (border.miny + border.maxy) / 2, s: Math.min(cv.width / w, cv.height / h) * 0.98 };
+      return;
+    }
+    const mc = myCells();
+    if (!mc.length) return;
+    let sx = 0, sy = 0, sm = 0, ss = 0;
+    for (const c of mc) { const m = c.s * c.s; sx += c.x * m; sy += c.y * m; sm += m; ss += c.s * c.s; }
+    cam = { x: sx / sm, y: sy / sm, s: Math.pow(Math.min(64 / Math.sqrt(ss), 1), 0.4) };
+  }
+  // Salji mis serveru kao pravi klijent (svakih 40ms), f64 svetske koordinate.
+  setInterval(() => {
+    if (spectate || !myCells().length) return;
+    const wx = cam.x + (mouse.x - cv.width / 2) / cam.s, wy = cam.y + (mouse.y - cv.height / 2) / cam.s;
+    const b = new ArrayBuffer(21), dv = new DataView(b);
+    dv.setUint8(0, 16); dv.setFloat64(1, wx, true); dv.setFloat64(9, wy, true); dv.setUint32(17, 0, true);
+    if (ws.readyState === 1) ws.send(b);
+  }, 40);
+
+  function frame() {
+    updateCam();
+    const alive = myCells().length > 0;
+    if (!spectate && wasAlive && !alive) { if (!deadSince) deadSince = performance.now(); if (performance.now() - deadSince > 400) menu.style.display = 'block'; }
+    if (alive) deadSince = 0;
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.fillStyle = '#f2f2f2'; g.fillRect(0, 0, cv.width, cv.height);
+    g.setTransform(cam.s, 0, 0, cam.s, cv.width / 2 - cam.x * cam.s, cv.height / 2 - cam.y * cam.s);
+    g.strokeStyle = '#999'; g.lineWidth = 4 / cam.s; g.strokeRect(border.minx, border.miny, border.maxx - border.minx, border.maxy - border.miny);
+    const list = [...nodes.entries()].sort((a, b) => a[1].s - b[1].s);
+    for (const [id, n] of list) {
+      g.beginPath(); g.arc(n.x, n.y, n.s, 0, Math.PI * 2);
+      g.fillStyle = `rgb(${n.r},${n.g},${n.b})`; g.fill();
+      if (n.f & 1) { g.strokeStyle = '#2a2'; g.lineWidth = 6 / cam.s; g.stroke(); }
+      if (n.name && n.s > 25) {
+        const isTeam = n.name.startsWith('tripleX');
+        g.fillStyle = isTeam ? '#000' : '#fff'; g.font = `bold ${Math.max(14, n.s * 0.35)}px Arial`; g.textAlign = 'center'; g.textBaseline = 'middle';
+        g.fillText(n.name, n.x, n.y);
+        if (isTeam) { g.strokeStyle = '#e00'; g.lineWidth = 8 / cam.s; g.stroke(); }
+      }
+    }
+    hud.textContent = spectate ? 'SPECTATOR - crveni obrub = tim tripleX' : (alive ? 'masa ' + Math.round(myCells().reduce((a, c) => a + c.s * c.s / 100, 0)) : '');
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

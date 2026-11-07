@@ -1,5 +1,6 @@
 node_modules/
 captures/
+sim-out/
 *.log
 .DS_Store
 user-data/

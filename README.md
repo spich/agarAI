@@ -78,7 +78,50 @@ dole), možeš i bez njega (auto-join).
 | `--chrome <putanja>` | Ručno zadaj Chrome binarni fajl |
 | `--tick <ms>` | Interval petlje (default 120) |
 
+### Štelovanje ponašanja
+
+Pragovi pretnje su **po masi** (kao u igri), ne po veličini.
+
+| Opcija | Default | Šta radi |
+|---|---|---|
+| `--threatRatio` | 2.0 | Beži tek od protivnika sa ≥2× tvoje mase (može te split-ovati) |
+| `--eaterRatio` / `--eaterAvoid` | 1.3 / 1.4 | 1.3–2× mase: ne beži, samo ga zaobiđi |
+| `--splitReach` | 500 | Domet tuđeg splita — zona bekstva ga uvek pokriva |
+| `--fleeFactor` | 2.25 | Veličina zone bekstva `(ja+on)×ovo` |
+| `--threatBand` | 1.6 | Zona zaobilaženja oko pretnje (klizi oko nje, ne vraća se kroz nju) |
+| `--fleeExit` / `--fleeLatch` | 1.25 / 450 | Bekstvo traje dok pretnja nije dalje od zone×ovo / bar ovoliko ms |
+| `--virusAvoid` / `--virusPush` | 1.15 / 1.1 | Koliko blizu prolazi virusu / koliko jako skreće |
+| `--feedmode kamikaze\|eject` | kamikaze | Split u kralja (brzo) ili W sa distance |
+| `--kamiReach` / `--splitCd` | 1.7 / 1600 | Kad se split-uje u kralja / razmak između splitova |
+| `--meetRange` | 3500 | Kralj ide u susret spremnom hraniocu do ove daljine |
+| `--turnPenalty` | 1.5 | Prednost hrani ispred (manje okretanja); 0 = najbliža |
+| `--foodScope` | 10 | Gleda hranu samo do `veličina×ovo` |
+| `--kingSplit` | isključeno | Dozvoli kralju split-lov (inače masa ostaje na hrpi) |
+| `--jitterLog` | isključeno | Ispiši svaki nagli okret i koja ga odluka izaziva |
+
 Pun spisak: `node src/index.js --help`.
+
+## Testiranje
+
+```bash
+npm test          # brzi unit testovi (dekoder na pravim agar.rs frejmovima, kontrola, strategija)
+npm run sim       # 60s simulacija: lokalni "agar.rs" + pravi alat + izveštaj
+```
+
+`npm run sim` podiže lokalni server koji govori **isti protokol kao agar.rs**
+(MultiOgar-Edited), sa consent prozorom, Play dugmetom, hranom, virusima i 6 AI
+protivnika, pa pokrene ovaj alat (3 taba, headless) i na kraju ispiše tabelu:
+smrti (od tima / od neprijatelja), max masa kralja, prenos mase u timu, dupli
+split-ovi, pucanja na virusu, nagli okreti po uzroku — i PASS/FAIL provere.
+Snimci cele mape i log su u `sim-out/`.
+
+```bash
+node test/sim/run.mjs --seconds 90 --seed 2              # duže, ponovljiv svet
+node test/sim/run.mjs -- --feedmode eject --threatRatio 2.5   # podešavanja alatu posle --
+node test/sim/run.mjs --tool /drugi/checkout/src/index.js     # poredi drugu verziju
+```
+
+Ako Playwright ne nađe svoj browser: `AGARAI_CHROME=/putanja/do/chrome npm run sim`.
 
 ## Mapa okruženja (primer)
 
@@ -125,4 +168,9 @@ src/
   strategy.js         kralj / hranilac / bekstvo logika
   map.js              spajanje sveta + ASCII mapa
   inject/agarhook.js  IZVRŠAVA SE U STRANICI: WS hook + dekoder + kontrola
+test/
+  unit.test.mjs       unit testovi (npm test)
+  sim/server.mjs      lokalni "agar.rs" server (isti protokol) + metrike
+  sim/client.html     klijent simulatora (consent, Play, renderer)
+  sim/run.mjs         end-to-end simulacija + izveštaj (npm run sim)
 ```
