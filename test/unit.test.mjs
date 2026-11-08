@@ -87,6 +87,17 @@ test('dekoder: stvarni agar.rs frejmovi -> tacne pozicije, virus, hrana, ime', (
   assert.ok(st.entities.filter((e) => e.isFood).length >= 10);
 });
 
+test('dekoder: ime se pamti - sledeci update iste celije stize sa praznim imenom (pravi agar.rs)', () => {
+  const h = loadHook();
+  h.feed(OP64);
+  h.feed(OP16_NAMED);                                  // celija 0x31a10 ulazi u vidokrug SA imenom
+  h.feed(OP16);                                        // stvarni sledeci frejm: ista celija, ime prazno
+  const c = h.state().entities.find((e) => e.id === 0x00031a10);
+  assert.ok(c, 'celija postoji');
+  assert.equal(c.name, '[jovanalol102]maneater');
+  assert.equal(c.isFood, false, 'imenovan igrac nije hrana');
+});
+
 test('dekoder: moja celija (op32 + op16) -> spawned, me na tacnoj poziciji', () => {
   const h = loadHook();
   h.feed(OP64); h.feed(OP32); h.feed(OP16_ME);

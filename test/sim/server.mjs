@@ -302,9 +302,12 @@ export async function startServer(opts = {}) {
     const scale = Math.pow(Math.min(64 / total, 1), 0.4);
     return { x: c.x, y: c.y, hw: 650 / scale, hh: 470 / scale };
   }
-  function nodeBytes(n) {
+  // Kao pravi MultiOgar-Edited (potvrdjeno iz agar.rs sniff-a): ime se salje
+  // SAMO kad celija prvi put udje u vidokrug klijenta; u svakom sledecem
+  // update-u iste celije ime je prazno (0x0000).
+  function nodeBytes(n, withName) {
     const flags = n.type === 'virus' ? 0x01 : (n.type === 'eject' ? 0x20 : 0);
-    const name = n.type === 'player' ? n.owner.name : '';
+    const name = withName && n.type === 'player' ? n.owner.name : '';
     return Buffer.concat([u32(n.id), i16(n.x), i16(n.y), u16(Math.round(n.size)), Buffer.from(n.color), Buffer.from([flags]), utf16z(name)]);
   }
   function sendUpdates(eats) {
@@ -314,7 +317,7 @@ export async function startServer(opts = {}) {
       const parts = [];
       for (const n of nodes.values()) {
         if (v && (Math.abs(n.x - v.x) > v.hw + n.size || Math.abs(n.y - v.y) > v.hh + n.size)) continue;
-        vis.add(n.id); parts.push(nodeBytes(n));
+        vis.add(n.id); parts.push(nodeBytes(n, !cl.lastVis.has(n.id)));
       }
       const eatList = eats.filter((e) => cl.lastVis.has(e.prey) || vis.has(e.hunter));
       const eatenSet = new Set(eatList.map((e) => e.prey));

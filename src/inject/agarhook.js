@@ -100,7 +100,7 @@
   //     u16 size
   //     u8 r, u8 g, u8 b        (boja - UVEK, PRE flag-a)
   //     u8 flags                (0x01 virus, 0x10 izbacena masa)
-  //     utf16 name \0           (UVEK prisutno; prazno = 0x0000)
+  //     utf16 name \0           (UVEK prisutno; ime samo kad celija udje u vidokrug, inace 0x0000)
   //   u32 removeCount
   //   removeCount x { u32 id }                          -> uklanja se
   function decodeUpdate(view) {
@@ -140,7 +140,11 @@
         }
         cell.x = x; cell.y = y; cell.size = size;
         cell.r = r; cell.g = g; cell.b = b; cell.flags = flags;
-        cell.name = name;
+        // Server salje ime SAMO kad celija prvi put udje u vidokrug; u svakom
+        // sledecem update-u je ime prazno. Prazno ime NE sme da obrise
+        // zapamceno - inace botovi posle prve sekunde ne prepoznaju saigrace
+        // (bezali su od nosioca, a nosilac ih je jurio kao plen).
+        if (name) cell.name = name;
         cell.isMine = ownedIds.has(id);
         cell.t = now;
         classify(cell);
